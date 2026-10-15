@@ -1,19 +1,14 @@
-# 的道 v2.0.68 完整 GitHub 部署包
+# 的道 v2.0.69 完整 GitHub 部署包
 
-香港的士叫車 App「的道」完整部署包。包含最新前端 build（**已修復網頁空白頁 bug**）＋最新後端 code。
+香港的士叫車 App「的道」完整部署包。包含最新前端 build＋最新後端 code。
 
-## v2.0.68 重點修復
-- ✅ **修復網頁開唔到／JS 錯誤（filter crash）**：大廳訂單列表遇到 null／異常資料會成個網頁報錯（iPhone＋電腦都開唔到）。已全面加防禦：所有訂單列表過濾 null 元素，server 返咩怪嘢都唔會再撞。
-- ✅ **語音出單講完即時播報**：講完「XX去XX」出單成功即時語音讀「已出單，XX去XX」，唔使講第二次
-- ✅ **自己出嘅單唔再當「新單」**：唔會重複播報「新貨單」／彈通知／顯示喺自己大廳
-- ✅ **地點座標查詢改並行**：語音出單快咗約一倍
-- ✅ **語音出單頁面紅色提示**：「必需講『去』字」
-- ✅ **APK 改用原生 TTS**：解決 Samsung 手機「有時有聲有時無聲」問題（WebView 網頁語音唔穩定）
-- ✅ **APK 原生通知**：撳「開啟通知」會彈系統視窗，App 閂咗／鎖屏都收到「新貨單」推送
-- ✅ **修復「我出嘅單」顯示 bug**：出完單自己即刻喺「貨主」見到（server 記返邊個司機出）
-- ✅ **修復網頁空白頁 bug**：`basename` 已改根域名 `"/"`
-- ✅ 保留全部功能：新單語音播報（粵語＋女聲開關）、出貨語音落單、備注顯示、客人電話新文案、皇牌詳細規則
-- ✅ package.json 補齊全部依賴（express/cors/better-sqlite3/jsonwebtoken/bcryptjs/uuid/ws/web-push）
+## v2.0.69 重點修復（完整測試後）
+- ✅ **後台「今日訂單」口徑修正**：改為香港日曆日（00:00 起）計數，同「每日訂單」表一致（之前用 24 小時滾動窗口，數字對唔上）
+- ✅ **後台 tab 切換即時載入**：訂單列表／每日訂單／投訴／評分，撳入即時出數據，唔使等 10 秒 polling
+- ✅ **後台「會員列表」優化**：加搜尋（司機名／帳號／車牌／電話）、載入中狀態、清楚提示「顯示全部司機帳戶，搵唔到請去司機管理」
+- ✅ **司機「我出嘅單」徹底過濾**：自己出嘅單（包括 reload 之後）唔再顯示喺自己大廳、唔再重複播報「新貨單」（修復「我出咗單但自己大廳見到／出單要講第二次先播報」）
+- ✅ 全部端完整測試通過：乘客叫車、司機出貨／接單／行程、管理員後台所有 tab、租車列表
+- ✅ 之前修復全保留：網頁 JS 錯誤（filter null 防禦）、`myPostedIdsRef` TDZ 錯誤、語音出單即時播報、原生 TTS 女聲、原生通知、座標並行加速、紅色「必需講『去』字」提示
 
 ## 版本內容
 - 前端（`dist/`）：Vite build 成品，四端共用（乘客/司機/管理員/租車）
@@ -23,7 +18,7 @@
 1. 將本包 **所有檔案直接覆蓋** 你嘅 GitHub repo（`Ethanchan0712/Didao`）（唔好成個資料夾搬入去，避免多一層）：
    ```bash
    git add .
-   git commit -m "v2.0.68 修復網頁JS錯誤＋語音出單優化"
+   git commit -m "v2.0.69 完整測試修復後台＋司機大廳過濾"
    git push origin master
    ```
 2. Render 度建立 **Web Service**，連 GitHub repo，用 `Dockerfile` 部署（runtime: docker）。
@@ -36,7 +31,7 @@
 
 ## 驗證部署成功
 - 訪問 `https://<你嘅網址>/api/health` → 應返回 `{"ok":true,...}`
-- 主頁應正常顯示，F12 Console 冇 JS 錯誤；Ctrl+F5 強制刷新（舊 JS 有快取）
+- 主頁應正常顯示，F12 Console 冇 JS 錯誤；**部署完一定要 Ctrl+F5 強制刷新**（清舊 JS 快取）
 
 ## 本機測試
 ```bash
@@ -47,12 +42,12 @@ node server/index.cjs
 
 ## 目錄結構
 ```
-dikdou-v2.0.68-github-package/
+dikdou-v2.0.63-github-package/
 ├─ Dockerfile          # Render 部署
 ├─ render.yaml         # Render Blueprint（可選）
 ├─ package.json        # 後端依賴
 ├─ .env.example        # 環境變數範本
-├─ dist/               # 前端 build 成品（四端，已修復白頁＋JS錯誤）
+├─ dist/               # 前端 build 成品（四端）
 └─ server/             # 後端 code
    ├─ index.cjs        # 主入口（含 /api/health）
    ├─ db/index.cjs     # better-sqlite3 資料庫
