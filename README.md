@@ -1,8 +1,8 @@
-# 的道 v2.0.67 完整 GitHub 部署包
+# 的道 v2.0.68 完整 GitHub 部署包
 
 香港的士叫車 App「的道」完整部署包。包含最新前端 build（**已修復網頁空白頁 bug**）＋最新後端 code。
 
-## v2.0.67 重點修復
+## v2.0.68 重點修復
 - ✅ **修復網頁開唔到／JS 錯誤（filter crash）**：大廳訂單列表遇到 null／異常資料會成個網頁報錯（iPhone＋電腦都開唔到）。已全面加防禦：所有訂單列表過濾 null 元素，server 返咩怪嘢都唔會再撞。
 - ✅ **語音出單講完即時播報**：講完「XX去XX」出單成功即時語音讀「已出單，XX去XX」，唔使講第二次
 - ✅ **自己出嘅單唔再當「新單」**：唔會重複播報「新貨單」／彈通知／顯示喺自己大廳
@@ -23,7 +23,7 @@
 1. 將本包 **所有檔案直接覆蓋** 你嘅 GitHub repo（`Ethanchan0712/Didao`）（唔好成個資料夾搬入去，避免多一層）：
    ```bash
    git add .
-   git commit -m "v2.0.67 修復網頁JS錯誤＋語音出單優化"
+   git commit -m "v2.0.68 修復網頁JS錯誤＋語音出單優化"
    git push origin master
    ```
 2. Render 度建立 **Web Service**，連 GitHub repo，用 `Dockerfile` 部署（runtime: docker）。
@@ -47,7 +47,7 @@ node server/index.cjs
 
 ## 目錄結構
 ```
-dikdou-v2.0.67-github-package/
+dikdou-v2.0.68-github-package/
 ├─ Dockerfile          # Render 部署
 ├─ render.yaml         # Render Blueprint（可選）
 ├─ package.json        # 後端依賴
