@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "hk.didao.app",
+    "sha256_cert_fingerprints": ["72:83:D2:E3:0F:17:91:70:3F:97:41:B5:39:33:F1:49:3E:AE:28:3A:3C:72:44:A4:68:B4:B2:E2:D2:A0:BE:47"]
+  }
+}]
