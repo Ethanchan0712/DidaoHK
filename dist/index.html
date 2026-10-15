@@ -17426,12 +17426,20 @@ async function amapGeocode(address) {
 		if (!AMap?.Geocoder) return null;
 		const geocoder = new AMap.Geocoder({ city: "香港" });
 		return await new Promise((resolve) => {
+			let settled = false;
+			const settle = (v) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				resolve(v);
+			};
+			const timer = setTimeout(() => settle(null), 6e3);
 			geocoder.getLocation(trimmed, (status, result) => {
 				try {
 					if (status === "complete" && result?.geocodes?.length && result.geocodes[0]?.location) {
 						const { lng, lat } = result.geocodes[0].location;
 						if (typeof lng === "number" && typeof lat === "number" && lng !== 0 && lat !== 0) {
-							resolve({
+							settle({
 								lat,
 								lng
 							});
@@ -17439,7 +17447,7 @@ async function amapGeocode(address) {
 						}
 					}
 				} catch {}
-				resolve(null);
+				settle(null);
 			});
 		});
 	} catch {
@@ -17845,7 +17853,7 @@ var api_exports = /* @__PURE__ */ __exportAll({
 	updateDriverLocation: () => updateDriverLocation,
 	updateDriverProfile: () => updateDriverProfile
 });
-var API_BASE$1 = "https://didaohk.com";
+var API_BASE$1 = "";
 var DEFAULT_TIMEOUT = 15e3;
 async function request(method, url, data, cfg) {
 	const controller = new AbortController();
@@ -36485,7 +36493,7 @@ function FloatingOrderOverlay() {
 			playWave();
 			try {
 				__vitePreload(async () => {
-					const { LocalNotifications } = await import("./esm-rBb6plzL.js");
+					const { LocalNotifications } = await import("./esm-6BFCyMyS.js");
 					return { LocalNotifications };
 				}, [], import.meta.url).then(({ LocalNotifications }) => {
 					LocalNotifications.requestPermissions().then((perm) => {
@@ -71656,7 +71664,7 @@ function AdminPage() {
 		setBackingUp(true);
 		try {
 			const token = getAdminToken();
-			const res = await fetch(`https://didaohk.com/api/admin/backup`, { headers: { Authorization: `Bearer ${token}` } });
+			const res = await fetch(`/api/admin/backup`, { headers: { Authorization: `Bearer ${token}` } });
 			if (!res.ok) throw new Error("http");
 			const data = await res.json();
 			const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -71689,7 +71697,7 @@ function AdminPage() {
 				const parsed = JSON.parse(text);
 				if (!parsed || !parsed.tables) throw new Error("bad");
 				const token = getAdminToken();
-				const res = await fetch(`https://didaohk.com/api/admin/restore`, {
+				const res = await fetch(`/api/admin/restore`, {
 					method: "POST",
 					headers: {
 						Authorization: `Bearer ${token}`,
@@ -73861,7 +73869,7 @@ function writeMyPostIds(ids) {
 		scopedStorage.setItem(MY_POSTS_KEY, JSON.stringify(ids));
 	} catch {}
 }
-var API_BASE = "https://didaohk.com";
+var API_BASE = "";
 var DEVICE_KEY_STORAGE = "hktaxi_device_key";
 function getDeviceKey() {
 	try {
@@ -78805,7 +78813,7 @@ function App() {
 //#endregion
 export { __vitePreload as t };
 
-//# sourceMappingURL=main-BadW1cHe.js.map</script>
+//# sourceMappingURL=main-Cuv6Q3oV.js.map</script>
     <style>@import "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap";/* required styles */
 
 .leaflet-pane,
