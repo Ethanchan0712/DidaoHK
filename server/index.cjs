@@ -94,7 +94,7 @@ process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] unhandledRejection:', reason);
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🚕 的道後端服務啟動成功！`);
   console.log(`   端口: ${PORT}`);
   console.log(`   API:  http://localhost:${PORT}/api/`);

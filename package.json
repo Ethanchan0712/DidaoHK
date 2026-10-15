@@ -1,8 +1,8 @@
 {
   "name": "didao-server",
-  "version": "2.0.62",
+  "version": "2.0.63",
   "type": "commonjs",
-  "description": "的道 v2.0.62 香港的士叫車 App 後端 (Express + better-sqlite3 + WebSocket + FCM + 語音播報/語音落單)",
+  "description": "的道 v2.0.63 香港的士叫車 App 後端 (Express + better-sqlite3 + WebSocket + FCM + 語音播報/語音落單)",
   "main": "server/index.cjs",
   "scripts": { "start": "node server/index.cjs" },
   "dependencies": {
