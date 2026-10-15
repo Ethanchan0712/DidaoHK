@@ -11,10 +11,7 @@ COPY package.json ./
 RUN npm install --omit=dev --ignore-scripts \
     && npm rebuild better-sqlite3 --build-from-source
 
-# ✅ 關鍵：Docker內部執行Vite build，生成dist
-RUN npm run build
-
-# 複製編譯好嘅前端靜態檔
+# 直接複製本地已經編譯好嘅dist
 COPY dist ./dist
 COPY server ./server
 
