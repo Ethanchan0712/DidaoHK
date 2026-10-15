@@ -54,9 +54,12 @@ async function sendNewOrderPush(db, order, opts = {}) {
           extra = ` ｜ 距你 ${dist.toFixed(1)}km · 約 ${etaMin}分鐘`;
         }
       }
+      const note = order.passengerNotes?.customNote || '';
+      // 備註/額外要求：有就拼入通知 body，其他司機收推送時直接睇到
+      const noteText = note ? ` ｜ 📋${note}` : '';
       const payload = JSON.stringify({
         title,
-        body: `${pickup} → ${dest} ｜ ${fareText}${extra}`,
+        body: `${pickup} → ${dest} ｜ ${fareText}${extra}${noteText}`,
         data: { orderId: order.id, pickup, dest, fare },
         // 傳埋導航目標俾 SW 跳去對應單
         url: '/driver/hall',

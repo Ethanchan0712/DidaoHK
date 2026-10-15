@@ -119,6 +119,10 @@ router.post('/passenger/request', authPassenger, (req, res) => {
   const now = Date.now();
   const pLat = pickupObj.lat ?? 22.3;
   const pLng = pickupObj.lng ?? 114.17;
+  // destination 同 pickup 一樣要 fallback：前端 geocode 失敗（例如自訂地址查唔到座標）
+  // 時會冇 lat/lng，直接 INSERT NULL 會 500（NOT NULL constraint），唔可以咁
+  const dLat = destObj.lat ?? 22.28;
+  const dLng = destObj.lng ?? 114.16;
 
   db.prepare(`INSERT INTO orders (
     id, status, passenger_id,
@@ -132,7 +136,7 @@ router.post('/passenger/request', authPassenger, (req, res) => {
   ) VALUES (?, 'searching', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`).run(
     id, req.userId,
     pickupObj.name || '上車點', pLat, pLng,
-    destObj.name || '目的地', destObj.lat, destObj.lng,
+    destObj.name || '目的地', dLat, dLng,
     carType || '4pax', carModel || null, passengerNotes ? JSON.stringify(passengerNotes) : null,
     hasDiscountVal ? 1 : 0, tipVal || 0, estimatedFare,
     distanceKm || null, etaMinutes || null,
@@ -307,6 +311,7 @@ router.post('/driver/post', authDriver, (req, res) => {
   const {
     pickup, destination, carType, carModel, estimatedFare, taxiType,
     isDirect, tip, dispatchPhase, teishokuPrice, passengerPhone, distanceKm, etaMinutes,
+    passengerNotes,
   } = req.body || {};
 
   const pickupObj = pickup || {};
@@ -337,7 +342,8 @@ router.post('/driver/post', authDriver, (req, res) => {
     id,
     pickupObj.name || '上車點', pLat, pLng,
     destObj.name || '目的地', dLat, dLng,
-    carType || '4pax', carModel || null, null,
+    carType || '4pax', carModel || null,
+    passengerNotes ? JSON.stringify(passengerNotes) : null,
     (isDirect === 'discount85') ? 1 : 0, tip || 0, estimatedFare,
     distanceKm || null, etaMinutes || null,
     pLat, pLng,

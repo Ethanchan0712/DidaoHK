@@ -1,109 +1,54 @@
-# 项目技术规范
+# 的道 v2.0.62 完整 GitHub 部署包（含語音播報＋語音落單）
 
-## 技术栈
+香港的士叫車 App「的道」完整部署包。包含最新前端 build（含**新貨單語音播報**、**出貨語音落單**、**備注顯示**、**客人電話新文案**）＋最新後端 code。
 
-- 前端: React 19 + TypeScript
-- 样式: Tailwind CSS v4
-- UI 组件: shadcn/ui `import { Button } from "@/components/ui/button";`
-- 图标: lucide-react `import { SearchIcon } from "lucide-react";`
-- 图表: echarts-for-react `import ReactECharts from "echarts-for-react";`
-- 动画: framer-motion `import { motion } from "framer-motion";`
-- 路由: react-router-dom `import { Link, useNavigate } from "react-router-dom";`
+## 版本內容（v2.0.62）
+- 前端（`dist/`）：Vite build 成品，四端共用（乘客/司機/管理員/租車）
+- 後端（`server/`）：Express + better-sqlite3 + WebSocket(實時) + Firebase FCM 推送
+- 新增功能：
+  - **新單語音播報**：有新貨單自動讀出「新貨單，上車點，去目的地」（粵語）
+  - **靜音開關**：司機設定頁「通知設定 → 新單語音播報」可開關
+  - **出貨語音落單**：出貨彈窗上車點/目的地加 🎤 咪按鈕，講地址自動填入
+  - **備注顯示**：貨主出貨填嘅備注/額外要求，接單司機卡片會顯示
+  - **客人電話新文案**：「客人電話（若不留客人電話系統會留你電話）」
 
----
+## 部署方式（Render，GitHub 連線）
+1. 將本包 push 上你嘅 GitHub repo（`Ethanchan0712/Didao`）：
+   ```bash
+   git init
+   git add .
+   git commit -m "v2.0.62 語音播報+語音落單"
+   git remote add origin https://github.com/Ethanchan0712/Didao.git
+   git push -u origin master
+   ```
+2. Render 度建立 **Web Service**，連 GitHub repo，用 `Dockerfile` 部署（runtime: docker）。
+3. 環境變數（Render 或 `.env`）：
+   | Key | 值 |
+   |---|---|
+   | `PORT` | `10000` |
+   | `DB_PATH` | `/var/data/taxi.db`（配合持久磁碟，避免重啟重置資料） |
+4. 健康檢查：`/api/health`。
 
-## 目录结构
-
-```
-src/
-├── index.tsx            # 入口（勿修改）
-├── app.tsx              # 路由配置（仅在 <Routes> 内增删 <Route>）
-├── index.css            # 全局样式 + 主题变量
-├── components/          # 基础 UI 组件（禁止存放业务组件）
-│   ├── layout.tsx       # 全局布局容器（含 <Outlet />）
-│   └── ui/              # shadcn/ui 内置组件（勿修改）
-├── pages/               # 页面模块（每个页面一个目录）
-│   ├── <PageName>/      # 页面目录示例
-│   │   ├── PageName.tsx        # 页面入口文件与目录同名
-│   │   └── components/         # 页面专属组件
-│   └── NotFoundPage/
-│       └── NotFoundPage.tsx
-├── hooks/               # 自定义 Hooks
-└── lib/                 # 工具函数（cn() 等）
-
-shared/
-└── static/              # 静态资源
-    ├── data/            # 数据文件（JSON）
-    └── images/          # 图片资源
-```
-
----
-
-## 模板初始状态
-
-- `app.tsx` 首页路由指向平台内置的 `<Welcome />` 组件
-- 开发时需将 `index` 路由替换为业务首页，并在 `pages/` 下创建对应页面目录
-- `layout.tsx` 为空壳容器（仅 `<Outlet />`），需根据需求实现导航和布局
-
----
-
-## 禁止修改的文件
-
-| 文件 | 原因 |
-|------|------|
-| `src/index.tsx` | Provider 层级 + 样式引入，由模板管理 |
-| `src/components/ui/*` | shadcn/ui 内置组件，版本锁定 |
-
----
-
-## 文件放置规则
-
-| 内容类型 | 放置位置 |
-|---------|---------|
-| 新页面 | `src/pages/<PageName>/PageName.tsx` |
-| 页面专属组件 | `src/pages/<PageName>/components/` |
-| 自定义 Hooks | `src/hooks/` |
-| 工具函数 | `src/lib/` |
-| 静态数据文件 | `shared/static/data/` |
-| 静态图片 | `shared/static/images/` |
-
----
-
-## 导入路径
-
-```typescript
-// @/ 别名 → src/
-import { cn } from "@/lib/utils";
-import { useIsMobile } from "@/hooks/use-mobile";
-
-// @shared/ 别名 → shared/
-import heroImage from "@shared/static/images/hero.png";
-import configData from "@shared/static/config.json";
+## 本機測試
+```bash
+npm install
+node server/index.cjs
+# 前端網頁由 dist/ 提供，開 http://localhost:10000
 ```
 
----
-
-## 路由配置
-
-- 新增页面需在 `src/app.tsx` 的 `<Routes>` 内注册 `<Route>`
-- `BrowserRouter` 已在 `index.tsx` 中配置，`app.tsx` 中**禁止**再包裹 Router
-
----
-
-## 主题变量
-
-主题色定义在 `src/index.css`，通过 `:root` CSS 变量 + `@theme inline` 注册到 Tailwind。
-
-| 用途 | Tailwind 类 | CSS 变量 |
-|------|------------|----------|
-| 页面背景 | `bg-background` | `--background` |
-| 主文本 | `text-foreground` | `--foreground` |
-| 卡片背景 | `bg-card` | `--card` |
-| 次要文本 | `text-muted-foreground` | `--muted-foreground` |
-| 主色 | `bg-primary` / `text-primary` | `--primary` |
-| 强调色 | `bg-accent` | `--accent` |
-| 边框 | `border-border` | `--border` |
-| 危险色 | `text-destructive` | `--destructive` |
-| 图表色 | `bg-chart-1` ~ `bg-chart-5` | `--chart-1` ~ `--chart-5` |
-
-HSL 格式使用**空格分隔**：`--primary: hsl(150 60% 40%);`
+## 目錄結構
+```
+dikdou-v2.0.62-github-package/
+├─ Dockerfile          # Render 部署
+├─ render.yaml         # Render Blueprint（可選）
+├─ package.json        # 後端依賴（npm install）
+├─ .env.example        # 環境變數範本
+├─ dist/               # 前端 build 成品（四端）
+└─ server/             # 後端 code
+   ├─ index.cjs        # 主入口（含 /api/health）
+   ├─ db/index.cjs     # better-sqlite3 資料庫
+   ├─ routes/          # auth / orders / admin / chat / push / rental
+   ├─ middleware/      # auth middleware
+   ├─ lib/             # push (FCM)
+   └─ sse/             # Server-Sent Events hub
+```

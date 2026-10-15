@@ -141,8 +141,14 @@ router.post('/driver/register', (req, res) => {
   if (!idFront4 || !/^[A-Za-z0-9]{4}$/.test(String(idFront4))) {
     return res.status(400).json({ error: '請填寫身份証頭4位數字（例：A123）' });
   }
+  // 電話必填（會員號碼＝電話；UI 註冊頁 validatePhone 都係咁）：DB 對 phone 有 UNIQUE 約束，
+  // 唔填電話會令第二個無電話司機撞 UNIQUE 或者誤報「已註冊」，所以 server 要同 UI 一致咁要求
+  const phoneNorm = String(phone || '').replace(/[\s-]/g, '');
+  if (!/^[569]\d{7}$/.test(phoneNorm)) {
+    return res.status(400).json({ error: '請填寫正確電話號碼（8 位數字）' });
+  }
 
-  const existing = db.prepare('SELECT id FROM drivers WHERE username = ? OR phone = ?').get(username, phone || '');
+  const existing = db.prepare('SELECT id FROM drivers WHERE username = ? OR phone = ?').get(username, phoneNorm);
   if (existing) {
     return res.status(400).json({ error: '帳號或電話已經註冊咗' });
   }
@@ -166,7 +172,7 @@ router.post('/driver/register', (req, res) => {
 
   db.prepare(`INSERT INTO drivers (id, username, phone, password, name, plate, car_model, driver_license, id_front4, referrer_phone, status, created_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`).run(
-    id, username, phone || '', hash, name || username,
+    id, username, phoneNorm, hash, name || username,
     plate || '', carModel || '', driverLicense || '', String(idFront4).toUpperCase(),
     referrerPhoneNorm, now
   );

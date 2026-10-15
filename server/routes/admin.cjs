@@ -17,6 +17,13 @@ function toCamel(row) {
   return out;
 }
 
+// 移除敏感欄位（password hash）先至出街／出 SSE，防止洩漏 bcrypt hash
+function safeDriver(row) {
+  if (!row) return row;
+  const { password, ...rest } = row;
+  return toCamel(rest);
+}
+
 // ========== 統計 ==========
 router.get('/stats', authAdmin, (req, res) => {
   const pending = db.prepare("SELECT COUNT(*) as c FROM drivers WHERE status = 'pending'").get().c;
@@ -160,8 +167,8 @@ router.post('/drivers/:id/approve', authOperator, (req, res) => {
   ).run(now, isVip, vipExpires, isVvip, vvipExpires, id);
   const updated = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
 
-  sseHub.publishToAdmin('driver-updated', { driver: updated });
-  res.json({ driver: toCamel(updated) });
+  sseHub.publishToAdmin('driver-updated', { driver: safeDriver(updated) });
+  res.json({ driver: safeDriver(updated) });
 });
 
 // ========== 拒絕司機（營運主任都做到） ==========
@@ -174,8 +181,8 @@ router.post('/drivers/:id/reject', authOperator, (req, res) => {
   db.prepare("UPDATE drivers SET status = 'rejected', reject_reason = ? WHERE id = ?").run(reason || '', id);
   const updated = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
 
-  sseHub.publishToAdmin('driver-updated', { driver: updated });
-  res.json({ driver: toCamel(updated) });
+  sseHub.publishToAdmin('driver-updated', { driver: safeDriver(updated) });
+  res.json({ driver: safeDriver(updated) });
 });
 
 // ========== VVIP 申請列表 ==========
@@ -222,10 +229,10 @@ router.post('/drivers/:id/approve-vvip', authAdmin, (req, res) => {
   db.prepare('UPDATE drivers SET is_vvip = 1, vvip_expires_at = ?, vvip_applied = 0 WHERE id = ?').run(expiresAt, id);
   const updated = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
 
-  sseHub.publishToAdmin('driver-updated', { driver: updated });
-  sseHub.publishToDriver(id, 'vvip-approved', { driver: updated });
+  sseHub.publishToAdmin('driver-updated', { driver: safeDriver(updated) });
+  sseHub.publishToDriver(id, 'vvip-approved', { driver: safeDriver(updated) });
 
-  res.json({ driver: toCamel(updated) });
+  res.json({ driver: safeDriver(updated) });
 });
 
 // ========== 取消 VVIP ==========
@@ -237,10 +244,10 @@ router.post('/drivers/:id/revoke-vvip', authAdmin, (req, res) => {
   db.prepare('UPDATE drivers SET is_vvip = 0, vvip_applied = 0, vvip_expires_at = NULL WHERE id = ?').run(id);
   const updated = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
 
-  sseHub.publishToAdmin('driver-updated', { driver: updated });
-  sseHub.publishToDriver(id, 'vvip-revoked', { driver: updated });
+  sseHub.publishToAdmin('driver-updated', { driver: safeDriver(updated) });
+  sseHub.publishToDriver(id, 'vvip-revoked', { driver: safeDriver(updated) });
 
-  res.json({ driver: toCamel(updated) });
+  res.json({ driver: safeDriver(updated) });
 });
 
 // ========== 駁回 VVIP 申請 ==========
@@ -252,10 +259,10 @@ router.post('/drivers/:id/reject-vvip', authAdmin, (req, res) => {
   db.prepare('UPDATE drivers SET vvip_applied = 0, vvip_requested_at = NULL WHERE id = ?').run(id);
   const updated = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
 
-  sseHub.publishToAdmin('driver-updated', { driver: updated });
-  sseHub.publishToDriver(id, 'vvip-rejected', { driver: updated });
+  sseHub.publishToAdmin('driver-updated', { driver: safeDriver(updated) });
+  sseHub.publishToDriver(id, 'vvip-rejected', { driver: safeDriver(updated) });
 
-  res.json({ driver: toCamel(updated) });
+  res.json({ driver: safeDriver(updated) });
 });
 
 // ========== 訂單列表 ==========
