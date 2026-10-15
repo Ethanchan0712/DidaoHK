@@ -1,18 +1,33 @@
 {
-  "name": "didao-server",
-  "version": "2.0.62",
-  "type": "commonjs",
-  "description": "的道 v2.0.62 香港的士叫車 App 後端 (Express + WebSocket + FCM + 語音播報/語音落單)",
-  "main": "server/index.cjs",
-  "scripts": { "start": "node server/index.cjs" },
-  "dependencies": {
-    "bcryptjs": "^2.4.3"
-    "express": "^4.19.2",
-    "ws": "^8.18.0",
-    "jsonwebtoken": "^9.0.2",
-    "cors": "^2.8.5",
-    "better-sqlite3": "^11.0.0",
-    "firebase-admin": "^13.0.0"
+  "name": "didao-hk",
+  "version": "2.0.61",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "server": "node server/index.js",
+    "start": "node server/index.js"
   },
-  "engines": { "node": "20.x" }
+  "dependencies": {
+    "@capacitor/android": "^6.1.0",
+    "@capacitor/core": "^6.1.0",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.10",
+    "better-sqlite3": "^11.1.2",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "socket.io": "^4.7.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.0",
+    "@types/cors": "^2.8.17",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/multer": "^1.4.11"
+  }
 }
