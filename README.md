@@ -1,3 +1,25 @@
+# 的道 v2.0.74 完整 GitHub 部署包
+
+## v2.0.74 修復：重複出單（真正根治——顯示重複）
+### 真正原因（今次查到底）
+- server 其實冇出兩張單（接貨得 1 張＝server 得 1 張）
+- 「我出嘅單」顯示 2 張＝前端讀 localStorage fallback 假單：出單 API 被 3 分鐘防重擋（429）時，前端仍然寫入 localStorage 假單（POSTxxx）並顯示 → 呃咗司機以為出咗兩張
+
+### 修復（三點）
+1. 「我出嘅單」連網時讀 server /orders/driver/my-posted（真實數據）——唔再讀 localStorage 假單
+2. 出單 API 被 3 分鐘防重擋（429）→ 唔好 fallback 寫假單，直接提示「你啱啱先出過相同路線單」
+3. server 出單成功 → 唔寫本地大廳假單（server 自己廣播）
+
+### 效果
+- 再出單只會出現 1 張（server 真單）
+- 舊 localStorage 假單唔會再顯示
+
+## 部署方式
+1. 覆蓋 GitHub repo（Ethanchan0712/Didao）→ commit「v2.0.74 根治重複顯示」→ push
+2. Render 自動部署
+3. 部署完 Ctrl+F5（手機關 app 再開）
+4. 驗證：didaohk.com 底部「版本 2.0.74」
+
 # 的道 v2.0.73 完整 GitHub 部署包
 
 ## v2.0.73 修復：重複出單（根治）
