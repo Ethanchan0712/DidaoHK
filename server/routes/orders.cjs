@@ -62,6 +62,9 @@ function orderToJson(row) {
     teishoku: !!row.teishoku,
     teishokuPrice: row.teishoku_price,
     isDirect: row.is_direct || 'standard',
+    // v2.0.78/79：皇牌單10秒鎖定
+    royalLock: row.royal_lock ?? 0,
+    royalLockExpireAt: row.royal_lock_expire_at || undefined,
     // VVIP 分級派單
     dispatchPhase: row.dispatch_phase ?? 0,
     dispatchPhaseStartedAt: row.dispatch_phase_started_at,
@@ -345,6 +348,12 @@ router.post('/driver/post', authDriver, (req, res) => {
   const dLat = destObj.lat ?? 22.28;
   const dLng = destObj.lng ?? 114.16;
 
+  // v2.0.78/79：皇牌直單（is_direct='direct'）＝皇牌單，出單後 10 秒皇牌鎖定期，
+  // 鎖定期內只限皇牌(VVIP)司機接，10 秒到期自動開放俾普通司機
+  const isRoyalDirect = isDirectStr === 'direct';
+  const royalLock = isRoyalDirect ? 1 : 0;
+  const royalLockExpireAt = isRoyalDirect ? now + 10 * 1000 : null;
+
   // passenger_id 用通用值（出貨單冇真實乘客）
   db.prepare(`INSERT INTO orders (
     id, status, passenger_id,
@@ -354,8 +363,9 @@ router.post('/driver/post', authDriver, (req, res) => {
     distance_km, eta_minutes,
     passenger_lat, passenger_lng,
     taxi_type, dispatch_phase, dispatch_phase_started_at, created_at,
-    created_by_driver, driver_posted_from, passenger_phone, teishoku, teishoku_price, is_direct
-  ) VALUES (?, 'searching', 'driver_post', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    created_by_driver, driver_posted_from, passenger_phone, teishoku, teishoku_price, is_direct,
+    royal_lock, royal_lock_expire_at
+  ) VALUES (?, 'searching', 'driver_post', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     id,
     pickupObj.name || '上車點', pLat, pLng,
     destObj.name || '目的地', dLat, dLng,
@@ -366,7 +376,8 @@ router.post('/driver/post', authDriver, (req, res) => {
     pLat, pLng,
     taxiType || 'red', dispatchPhase ?? 3, now, now,
     1, req.userId, passengerPhone || null,
-    (isDirectStr === 'teishoku') ? 1 : 0, teishokuPrice || null, isDirectStr
+    (isDirectStr === 'teishoku') ? 1 : 0, teishokuPrice || null, isDirectStr,
+    royalLock, royalLockExpireAt
   );
 
   const order = getOrderById(id);
@@ -416,6 +427,13 @@ router.get('/driver/hall', authDriver, (req, res) => {
   const expireBefore = Date.now() - 24 * 60 * 60 * 1000;
   db.prepare(`DELETE FROM orders WHERE status = 'searching' AND created_at < ?`).run(expireBefore);
 
+  // v2.0.78/79：皇牌鎖定期自動解鎖——鎖定期已過嘅皇牌單自動開放俾所有司機
+  try {
+    db.prepare(`UPDATE orders SET royal_lock = 0
+      WHERE royal_lock = 1 AND royal_lock_expire_at IS NOT NULL AND royal_lock_expire_at < ?`)
+      .run(Date.now());
+  } catch { /* ignore */ }
+
   const driverLat = driver.current_lat || 22.3;
   const driverLng = driver.current_lng || 114.17;
   const isVvip = !!driver.is_vvip;
@@ -430,7 +448,9 @@ router.get('/driver/hall', authDriver, (req, res) => {
     LEFT JOIN passengers p ON o.passenger_id = p.id
     LEFT JOIN drivers d ON o.driver_id = d.id
     WHERE o.status = 'searching' AND o.created_at > ?
-    ORDER BY o.created_at DESC
+    ORDER BY
+      CASE WHEN o.is_direct = 'direct' OR o.royal_lock = 1 THEN 0 ELSE 1 END ASC,
+      o.created_at DESC
     LIMIT 20
   `).all(expireBefore);
 
@@ -450,6 +470,9 @@ router.get('/driver/hall', authDriver, (req, res) => {
     // 拒單記錄：呢位司機拒過嘅單唔會再派俾佢
     if (myRejections.has(row.id)) return false;
 
+    // v2.0.78/79：皇牌鎖定期內（royal_lock=1），普通司機睇唔到，只限皇牌(VVIP)司機
+    if (row.royal_lock === 1 && !isVvip) return false;
+
     // VVIP 司機：所有階段嘅單都睇到
     if (isVvip) return true;
 
@@ -467,6 +490,8 @@ router.get('/driver/hall', authDriver, (req, res) => {
     driverIsVvip: isVvip,
     phaseRanges: DISPATCH_PHASE_RANGES,
     phaseDurations: DISPATCH_PHASE_DURATIONS,
+    // v2.0.78：司機統計（評分/接單/拒單/拒單率），前端顯示拒單率警告用
+    stats: db.getDriverStats(req.userId),
   });
 });
 
@@ -545,6 +570,12 @@ router.post('/driver/accept/:orderId', authDriver, (req, res) => {
     return res.status(403).json({ error: `仲要等 ${minWaitSec - elapsedSec} 秒先可以接單` });
   }
 
+  // v2.0.78/79：皇牌鎖定期單（royal_lock=1）——鎖定期內淨係皇牌(VVIP)司機可以接，
+  // 到期自動解鎖（hall 查詢時已解鎖）；普通司機喺鎖定期內直接拒絕
+  if (order.royal_lock === 1 && !vvipActive) {
+    return res.status(403).json({ error: '呢張皇牌單仲喺皇牌司機鎖定期（10秒），未開放俾普通司機' });
+  }
+
   const now = Date.now();
   const driverLat = driver.current_lat || order.pickup_lat + 0.01;
   const driverLng = driver.current_lng || order.pickup_lng + 0.01;
@@ -560,6 +591,11 @@ router.post('/driver/accept/:orderId', authDriver, (req, res) => {
   }
 
   const updated = getOrderById(orderId);
+
+  // v2.0.78：接單成功統計 +1（拒單率 = reject / (accept + reject)）
+  try {
+    db.prepare('UPDATE drivers SET total_accept_count = IFNULL(total_accept_count, 0) + 1 WHERE id = ?').run(req.userId);
+  } catch { /* ignore */ }
 
   sseHub.publishToOrder(orderId, 'order-accepted', { order: updated });
   sseHub.publishToDriverHall('order-taken', { orderId, driverId: req.userId });
@@ -588,6 +624,11 @@ router.post('/driver/reject/:orderId', authDriver, (req, res) => {
   // 記錄拒單：呢位司機之後唔會再見到呢張單（同一單唔會無限彈返出嚟）
   db.prepare('INSERT OR IGNORE INTO order_rejections (order_id, driver_id, created_at) VALUES (?, ?, ?)')
     .run(req.params.orderId, req.userId, Date.now());
+
+  // v2.0.78：拒單統計 +1（拒單率 = reject / (accept + reject)）
+  try {
+    db.prepare('UPDATE drivers SET reject_count = IFNULL(reject_count, 0) + 1 WHERE id = ?').run(req.userId);
+  } catch { /* ignore */ }
 
   // 通知該司機端：確認已拒單，可即時收起浮動卡／列表項
   sseHub.publishToDriver(req.userId, 'order-rejected-confirmed', { orderId: req.params.orderId });

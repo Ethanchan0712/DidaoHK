@@ -1,118 +1,103 @@
-# 的道 v2.0.77 GitHub 部署包
+# 的道 DidaoHK v2.0.78 完整部署包
 
-## v2.0.77：全面測試後修復 ＋ 登入帳戶重置根治
+> 版本：v2.0.78（versionCode：2078）
+> 香港的士叫車 App：乘客 + 司機 + 管理員 + 租車 四端
+> 部署目標：Render（Docker）+ Android APK/AAB（Capacitor）
 
-### 今次改動
-1. 貨主頁已取消單顯示「已取消 — 冇人接」（之前錯顯示「已完成」＋「仲未有司機接」矛盾）
-2. 「已生成 09:45:52」→「已生成 09:45:52 前」（清楚表示係幾耐前，唔會誤會係時間）
-3. Server 啟動 log 顯示數據庫路徑（方便確認用緊邊個 DB）
+---
 
-### ⚠️ 重要：登入帳戶重置根因＋根治（一定要做）
+## 🆕 v2.0.78 今次新增功能
 
-【點解每次部署要重新開帳戶】
-- 數據庫預設存喺 server/db/taxi.db（即 Docker image 內）
-- Render 每次部署＝重新 build 全新 image → 舊 DB（連帳戶）全部冇晒 → 要重新註冊
+### 1. 新單粵語 TTS 播報（司機端）
+- 在線司機收到新單 → 先響「叮」提示聲，再粵語讀出：上車點、目的地、全程公里、距離你幾遠、車種（皇牌單會讀「皇牌單」）
+- 語音設定面板（⚙️ 按鈕）：
+  - 新單語音播報總開關
+  - **只播皇牌單**（普通單唔讀，淨係讀皇牌直單）
+  - **重複播報次數**（1 / 2 / 3 次，錯過都聽多次）
+  - 設定自動儲存（localStorage），下次登入記住
+- `seenOrderIdsRef` 防重複播報（polling 唔會同一張單重複讀）
+- 保留貨主出單成功「已出單」TTS 播報
 
-【根治：Render 加 Persistent Disk】
-1. Render Dashboard → 揀「的道」服務 → 左邊選單 Disks → 建立 Disk
-2. Mount Path 填 `/app/data`（Size 揀 1GB，免費版夠用）
-3. 環境變數加 `DB_PATH=/app/data/taxi.db`
-4. Deploy 一次（server 會自動開 /app/data 建 DB）
-5. 之後每次部署，帳戶、訂單全部保留，唔使再重新開帳戶！
+### 2. 搶單成功音效
+- 司機接單成功嗰刻，即時響「叮咚」成功提示音（Web Audio，iOS/Android 都播到）
 
-【已經部署緊嘅帳戶點算】
-- 加咗 Persistent Disk 之後第一次 deploy，DB 會由空開始（要重新註冊一次）
-- 之後就永久保留，唔會再清
+### 3. 皇牌單優先排序
+- 接貨大廳：**皇牌單（皇牌直單）永遠排最頂**，之後先按新單優先
+- 單卡顯示 👑 皇牌單 標記
 
-## 部署
-1. 成個部署包覆蓋 GitHub repo → commit「v2.0.77」→ push
-2. Render 自動部署（前端+後端一齊）
-3. 部署完 Ctrl+F5 / 手機關 app 再開
-4. 驗證：didaohk.com 底部「版本 2.0.77」＋ server log 見到「數據庫路徑: /app/data/taxi.db」
+### 4. 皇牌單 10 秒鎖定派單
+- 皇牌直單出單後，**10 秒皇牌鎖定期**：淨係皇牌(VVIP)司機見到同接到
+- 10 秒到期自動解鎖，開放俾所有司機
+- 普通司機喺鎖定期內撳接單，後端會擋：「呢張皇牌單仲喺皇牌司機鎖定期（10秒）」
 
-# 的道 v2.0.76 GitHub 部署包
+### 5. 司機評分 + 拒單率統計
+- 後端 DB 自動加欄位：`drivers.reject_count`、`drivers.total_accept_count`
+- 接單成功 → 接單次數 +1；撳拒絕 → 拒單次數 +1
+- 拒單率 = 拒單次數 ÷（接單次數 + 拒單次數）
+- 司機大廳：拒單率超過 **40%** 會彈紅色警告橫額
+- 管理員後台會員列表：顯示 ⭐評分、接單數、拒單數、拒單率%（超過 40% 紅色閃動標記）
 
-## v2.0.76 全量優化（16 項）
-### 你投訴嘅 2 個核心 bug
-1. 🎙️ TTS「10次得1次有聲」→ safeSpeak：播報前強制 cancel + pause/resume 喚醒卡死引擎 + onend/onerror 監聽 + 12 秒超時重置；撳 Mic／出一張新單嗰刻預先 unlockSpeech 攞 autoplay 授權
-2. ❌ 取消按鈕「撳兩下＋閃一下」→ 單擊即 loading「取消中…」鎖，API 成功後先 refresh（唔再中途重渲染）
+### 冇改動 / 保留
+- 預約單完全保留，**冇做訂單自動過期**
+- 冇做司機上線心跳（留 v2.0.79+）
+- 原有四端全部功能、地圖、驗證碼登入、貨主出單、打賞、推送通知全部保留
 
-### 其他優化
-3. 取消單即時解除 3 分鐘防重鎖（取消完可以即刻再出同路線）
-4. 接單／拒絕按鈕加「接單中…／拒絕中…」loading 鎖，防雙撳
-5. 出貨 badge＝只計 searching（等緊接）單；接貨 badge 由過濾後列表實計
-6. 修復 PostOrderSheet 跨 scope 用 myPostedIdsRef 嘅隱藏 crash（出單成功後可能誤報「失敗」）
-7. 後端接單鎖校驗：皇牌即時/VIP 10 秒/普通 30 秒，防繞過前端搶單（403）
-8. 全局斷網橫幅「網絡唔穩定／離線中」
-9. 401 登入過期自動清 token 跳登入頁（已有）＋ vibration iOS 兼容（已有 try/catch）
-10. 列表 key 統一 orderId（防 polling 重複卡片）
-11. 里程標「約」字（估算）
-12. index.html no-cache（部署後版本號即時更新）
-13. GPS 定位狀態綠點／灰點
-14. 通知紅點「全部已讀」清零（已有）
-15. JWT 30 日有效期（已有）
-16. 語音出單後自己單唔會當「新單」播報（server hall 已過濾）
+---
 
-## 部署（重要：今次有後端改動，要成包 push）
-1. 成個部署包覆蓋 GitHub repo → commit「v2.0.76 全量優化＋後端鎖」→ push
-2. Render 自動部署（前端+後端一齊更新，唔可以淨更新前端）
-3. 部署完 Ctrl+F5（手機關 app 再開）
-4. 驗證：didaohk.com 底部「版本 2.0.76」
+## 🚀 Render 部署步驟
 
-# 的道 v2.0.75 GitHub 部署包
+1. 將 `dikdou-v2.0.78-github-package` 成個資料夾推上 GitHub repo（或手動上傳 Render）
+2. Render 建立 Web Service：
+   - Runtime: **Docker**
+   - Dockerfile 路徑: `./Dockerfile`
+   - Health Check Path: `/api/health`
+3. 環境變數：
+   - `PORT` = `10000`
+   - `DB_PATH` = `/var/data/taxi.db`
+4. 掛載 Persistent Disk：mount `/var/data`（1GB 已夠）
+5. Deploy，完成後開網站 Ctrl+F5 強制刷新，確認版本 v2.0.78
 
-## v2.0.75 修復：出貨 tab 只顯示仲等緊接嘅單
-- 「出貨」tab 嘅「我出嘅單」而家淨係顯示 searching（仲等緊接）嘅單
-- 已經俾人接咗/完成咗/取消咗嘅單唔會留喺「出貨」度（數字 badge 一齊少返）
-- 想睇已處理單狀態（邊個接咗/車牌/電話）→ 「貨主」tab
-- 附帶（上一版 2.0.74）：重複顯示根治——「我出嘅單」連網讀 server 真數據，唔再讀 localStorage 假單；429 防重唔再寫假單
+> ✅ 後端啟動會自動做 DB migration（PRAGMA 檢查欄位唔存在先加），**唔使人手執 SQL**
+> ✅ 已有 Persistent Disk 數據（舊司機/單）會原封保留，欄位自動補齊
 
-## 部署方式
-1. 覆蓋 GitHub repo → commit「v2.0.75 出貨淨顯示等緊接單」→ push
-2. Render 自動部署 → 部署完 Ctrl+F5 / 手機關 app 再開
-3. 驗證：didaohk.com 底部「版本 2.0.75」
+---
 
-# 的道 v2.0.74 完整 GitHub 部署包
+## 📱 Android APK / AAB 打包
 
-## v2.0.74 修復：重複出單（真正根治——顯示重複）
-### 真正原因（今次查到底）
-- server 其實冇出兩張單（接貨得 1 張＝server 得 1 張）
-- 「我出嘅單」顯示 2 張＝前端讀 localStorage fallback 假單：出單 API 被 3 分鐘防重擋（429）時，前端仍然寫入 localStorage 假單（POSTxxx）並顯示 → 呃咗司機以為出咗兩張
+部署包唔包含 Android 原生工程（避免過大）。用你本機嘅 `dikdou-app` 項目（同一份源碼已合併）：
 
-### 修復（三點）
-1. 「我出嘅單」連網時讀 server /orders/driver/my-posted（真實數據）——唔再讀 localStorage 假單
-2. 出單 API 被 3 分鐘防重擋（429）→ 唔好 fallback 寫假單，直接提示「你啱啱先出過相同路線單」
-3. server 出單成功 → 唔寫本地大廳假單（server 自己廣播）
+```bash
+npm install
+npm run build
+npx cap sync android
+```
 
-### 效果
-- 再出單只會出現 1 張（server 真單）
-- 舊 localStorage 假單唔會再顯示
+- APK：Android Studio → Build → Build APK
+- AAB（Google Play）：Build → Generate Signed Bundle / APK → Android App Bundle（用你嘅 keystore 簽名）
 
-## 部署方式
-1. 覆蓋 GitHub repo（Ethanchan0712/Didao）→ commit「v2.0.74 根治重複顯示」→ push
-2. Render 自動部署
-3. 部署完 Ctrl+F5（手機關 app 再開）
-4. 驗證：didaohk.com 底部「版本 2.0.74」
+---
 
-# 的道 v2.0.73 完整 GitHub 部署包
+## 📦 包結構
 
-## v2.0.73 修復：重複出單（根治）
-### 真正原因
-- 語音出單成功後，手機 TTS 播報有時無聲 → 司機以為冇出到單 → 再講多次 → 兩張單
-- 之前 server 防重只有 8 秒，擋唔到相隔 1 分鐘嘅重複操作
+```
+dikdou-v2.0.78-github-package/
+├─ Dockerfile          # Render Docker 部署配置
+├─ render.yaml         # Render Blueprint（可選）
+├─ package.json        # 後端依賴（Express + better-sqlite3 + SSE + FCM）
+├─ dist/               # 前端靜態檔（Vite build 產物，網頁版直接 serve）
+└─ server/             # 後端完整源碼
+   ├─ index.cjs        # 入口（自動 migration + SPA serve）
+   ├─ db/index.cjs     # 資料庫 schema + v2.0.78 自動加欄位
+   ├─ routes/          # auth / orders / admin / rental / chat / push
+   ├─ middleware/      # JWT 權限
+   ├─ sse/             # 即時推送（接單大廳）
+   ├─ lib/             # FCM push
+   └─ privacy.html / delete-account.html / assetlinks.json
+```
 
-### 修復（三重防線）
-1. **server 防重拉長**：同一司機 180 秒（3 分鐘）內唔可以出相同路線單
-   - 實測：第一次成功 ✅｜即時重複被擋 ✅｜另一司機相同路線正常 ✅｜唔同路線正常 ✅
-2. **前端語音出單成功回饋**：出單成功即時「已出單」語音＋手機震動 250ms（TTS 無聲都知成功）
-3. **前端成功後 10 秒鎖**：語音出單成功後 10 秒內鎖住（防止以為失敗再講多次）；失敗即刻解鎖可以再試
+---
 
-## 部署方式
-1. 將本包所有檔案直接覆蓋 GitHub repo（Ethanchan0712/Didao）→ commit「v2.0.73 根治重複出單」→ push
-2. Render 自動部署
-3. 部署完 Ctrl+F5（手機關 app 再開）
-4. 驗證：https://didaohk.com 底部顯示「版本 2.0.73」
-
-## 之前版本修復記錄
-- v2.0.72：語音出單 busy 鎖＋server 8 秒防重（未根治，今次拉長）
-- v2.0.71：司機出貨 500 錯誤、後台今日訂單時區錯、統計卡顯示總單數、會員列表顯示全部司機＋一鍵升級會員
+## ⚠️ 已知系統限制
+- Android WebView：司機登入後撳過頁面任何制，解鎖語音授權，TTS 先穩定出聲
+- iOS Safari：Apple autoplay 限制嚴格，TTS 有機會被系統靜默封鎖（系統安全政策，非程式 bug），有水滴聲 + Toast 做後備
+- 管理員帳號：admin / lovevivi815（後端啟動 log 會顯示）

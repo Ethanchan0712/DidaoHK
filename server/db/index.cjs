@@ -402,6 +402,54 @@ expireVips();
 setInterval(expireVips, 5 * 60 * 1000).unref?.();
 db.expireVips = expireVips;
 
+// ========== v2.0.78/79：司機統計 + 皇牌單10秒鎖定 ==========
+(function migrateV2078Columns() {
+  try {
+    const dCols = db.prepare('PRAGMA table_info(drivers)').all().map(c => c.name);
+    const addD = (name, ddl) => {
+      if (!dCols.includes(name)) {
+        try {
+          db.prepare(`ALTER TABLE drivers ADD COLUMN ${ddl}`).run();
+          console.log(`[DB] drivers +${name}`);
+        } catch (e) { console.warn(`[DB] skip ${name}:`, e.message); }
+      }
+    };
+    addD('reject_count', 'reject_count INTEGER DEFAULT 0');          // 拒單次數
+    addD('total_accept_count', 'total_accept_count INTEGER DEFAULT 0'); // 接單成功次數
+
+    const oCols = db.prepare('PRAGMA table_info(orders)').all().map(c => c.name);
+    const addO = (name, ddl) => {
+      if (!oCols.includes(name)) {
+        try {
+          db.prepare(`ALTER TABLE orders ADD COLUMN ${ddl}`).run();
+          console.log(`[DB] orders +${name}`);
+        } catch (e) { console.warn(`[DB] skip ${name}:`, e.message); }
+      }
+    };
+    addO('royal_lock', 'royal_lock INTEGER DEFAULT 0');              // 1=皇牌鎖定期（只限皇牌司機接）
+    addO('royal_lock_expire_at', 'royal_lock_expire_at INTEGER');    // 鎖定到期時間戳，過期自動開放
+  } catch (e) {
+    console.warn('[DB] migrateV2078Columns:', e.message);
+  }
+})();
+
+// 司機拒單率計算工具：拒單率 = reject / (accept + reject)
+db.getDriverStats = (driverId) => {
+  try {
+    const d = db.prepare('SELECT rating, reject_count, total_accept_count FROM drivers WHERE id = ?').get(driverId);
+    if (!d) return null;
+    const accept = d.total_accept_count || 0;
+    const reject = d.reject_count || 0;
+    const total = accept + reject;
+    return {
+      rating: d.rating ?? 5,
+      acceptCount: accept,
+      rejectCount: reject,
+      rejectRate: total === 0 ? 0 : Math.round((reject / total) * 1000) / 10, // 百分比（一位小數）
+    };
+  } catch { return null; }
+};
+
 // ===== Web Push 推播訂閱表（司機允許通知後註冊，有單時推播） =====
 db.exec(`
 CREATE TABLE IF NOT EXISTS push_subscriptions (
