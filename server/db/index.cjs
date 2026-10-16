@@ -10,6 +10,7 @@ if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 const db = new Database(DB_PATH);
+console.log(`📀 數據庫路徑: ${DB_PATH}`);
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');

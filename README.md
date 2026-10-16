@@ -1,3 +1,35 @@
+# 的道 v2.0.77 GitHub 部署包
+
+## v2.0.77：全面測試後修復 ＋ 登入帳戶重置根治
+
+### 今次改動
+1. 貨主頁已取消單顯示「已取消 — 冇人接」（之前錯顯示「已完成」＋「仲未有司機接」矛盾）
+2. 「已生成 09:45:52」→「已生成 09:45:52 前」（清楚表示係幾耐前，唔會誤會係時間）
+3. Server 啟動 log 顯示數據庫路徑（方便確認用緊邊個 DB）
+
+### ⚠️ 重要：登入帳戶重置根因＋根治（一定要做）
+
+【點解每次部署要重新開帳戶】
+- 數據庫預設存喺 server/db/taxi.db（即 Docker image 內）
+- Render 每次部署＝重新 build 全新 image → 舊 DB（連帳戶）全部冇晒 → 要重新註冊
+
+【根治：Render 加 Persistent Disk】
+1. Render Dashboard → 揀「的道」服務 → 左邊選單 Disks → 建立 Disk
+2. Mount Path 填 `/app/data`（Size 揀 1GB，免費版夠用）
+3. 環境變數加 `DB_PATH=/app/data/taxi.db`
+4. Deploy 一次（server 會自動開 /app/data 建 DB）
+5. 之後每次部署，帳戶、訂單全部保留，唔使再重新開帳戶！
+
+【已經部署緊嘅帳戶點算】
+- 加咗 Persistent Disk 之後第一次 deploy，DB 會由空開始（要重新註冊一次）
+- 之後就永久保留，唔會再清
+
+## 部署
+1. 成個部署包覆蓋 GitHub repo → commit「v2.0.77」→ push
+2. Render 自動部署（前端+後端一齊）
+3. 部署完 Ctrl+F5 / 手機關 app 再開
+4. 驗證：didaohk.com 底部「版本 2.0.77」＋ server log 見到「數據庫路徑: /app/data/taxi.db」
+
 # 的道 v2.0.76 GitHub 部署包
 
 ## v2.0.76 全量優化（16 項）
