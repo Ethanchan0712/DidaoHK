@@ -1,3 +1,32 @@
+# 的道 v2.0.76 GitHub 部署包
+
+## v2.0.76 全量優化（16 項）
+### 你投訴嘅 2 個核心 bug
+1. 🎙️ TTS「10次得1次有聲」→ safeSpeak：播報前強制 cancel + pause/resume 喚醒卡死引擎 + onend/onerror 監聽 + 12 秒超時重置；撳 Mic／出一張新單嗰刻預先 unlockSpeech 攞 autoplay 授權
+2. ❌ 取消按鈕「撳兩下＋閃一下」→ 單擊即 loading「取消中…」鎖，API 成功後先 refresh（唔再中途重渲染）
+
+### 其他優化
+3. 取消單即時解除 3 分鐘防重鎖（取消完可以即刻再出同路線）
+4. 接單／拒絕按鈕加「接單中…／拒絕中…」loading 鎖，防雙撳
+5. 出貨 badge＝只計 searching（等緊接）單；接貨 badge 由過濾後列表實計
+6. 修復 PostOrderSheet 跨 scope 用 myPostedIdsRef 嘅隱藏 crash（出單成功後可能誤報「失敗」）
+7. 後端接單鎖校驗：皇牌即時/VIP 10 秒/普通 30 秒，防繞過前端搶單（403）
+8. 全局斷網橫幅「網絡唔穩定／離線中」
+9. 401 登入過期自動清 token 跳登入頁（已有）＋ vibration iOS 兼容（已有 try/catch）
+10. 列表 key 統一 orderId（防 polling 重複卡片）
+11. 里程標「約」字（估算）
+12. index.html no-cache（部署後版本號即時更新）
+13. GPS 定位狀態綠點／灰點
+14. 通知紅點「全部已讀」清零（已有）
+15. JWT 30 日有效期（已有）
+16. 語音出單後自己單唔會當「新單」播報（server hall 已過濾）
+
+## 部署（重要：今次有後端改動，要成包 push）
+1. 成個部署包覆蓋 GitHub repo → commit「v2.0.76 全量優化＋後端鎖」→ push
+2. Render 自動部署（前端+後端一齊更新，唔可以淨更新前端）
+3. 部署完 Ctrl+F5（手機關 app 再開）
+4. 驗證：didaohk.com 底部「版本 2.0.76」
+
 # 的道 v2.0.75 GitHub 部署包
 
 ## v2.0.75 修復：出貨 tab 只顯示仲等緊接嘅單

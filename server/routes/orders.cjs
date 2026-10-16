@@ -132,8 +132,9 @@ router.post('/passenger/request', authPassenger, (req, res) => {
     distance_km, eta_minutes,
     passenger_lat, passenger_lng,
     taxi_type, dispatch_phase, dispatch_phase_started_at, created_at,
-    passenger_phone
-  ) VALUES (?, 'searching', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`).run(
+    passenger_phone,
+    created_by_driver, driver_posted_from
+  ) VALUES (?, 'searching', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 1, ?)`).run(
     id, req.userId,
     pickupObj.name || '上車點', pLat, pLng,
     destObj.name || '目的地', dLat, dLng,
@@ -142,7 +143,8 @@ router.post('/passenger/request', authPassenger, (req, res) => {
     distanceKm || null, etaMinutes || null,
     pLat, pLng,
     taxiType || 'red', now, now,
-    req.user.phone || null
+    req.user.phone || null,
+    req.userId
   );
 
   const order = getOrderById(id);
@@ -307,6 +309,9 @@ function refreshDispatchPhases() {
 setInterval(refreshDispatchPhases, 1000);
 
 // ========== 司機出貨（發佈訂單俾其他司機接）==========
+// 防重複出單：同一司機 180 秒內唔可以出相同路線單
+// （雙擊／語音出單重複觸發／出單後冇聲再講多次——全部擋住）
+const lastDriverPost = new Map(); // driverId -> { time, key }
 router.post('/driver/post', authDriver, (req, res) => {
   const {
     pickup, destination, carType, carModel, estimatedFare, taxiType,
@@ -316,10 +321,22 @@ router.post('/driver/post', authDriver, (req, res) => {
 
   const pickupObj = pickup || {};
   const destObj = destination || {};
+  // isDirect 一定要係 string（'standard'/'teishoku'/'discount85'/'discount90'/'95'/'90'）：
+  // 舊版 app／第三方 caller 可能傳 boolean true，SQLite 唔可以 bind boolean → 會 500，呢度 normalize 防禦
+  const isDirectStr = (typeof isDirect === 'string' && isDirect.trim()) ? isDirect.trim()
+    : (isDirect === true ? 'direct' : 'standard');
   // 接受 estimatedFare 為 0（「跳錶」單——不定價，實際按錶收費），但要齊起點/目的地
   if (!pickupObj || !destObj || estimatedFare === undefined || estimatedFare === null || estimatedFare === '') {
     return res.status(400).json({ error: '參數唔完整' });
   }
+
+  // 防重複出單（重複提交／語音連觸發）：同一司機 180 秒內相同路線擋第二張
+  const dupKey = `${pickupObj.name || ''}|${destObj.name || ''}|${carType || ''}|${taxiType || ''}`;
+  const prevPost = lastDriverPost.get(req.userId);
+  if (prevPost && Date.now() - prevPost.time < 180000 && prevPost.key === dupKey) {
+    return res.status(429).json({ error: '你啱啱先出過相同路線單，3分鐘內唔可以重複出，請確認上一張單係咪已經出咗' });
+  }
+  lastDriverPost.set(req.userId, { time: Date.now(), key: dupKey });
 
   const id = genOrderId();
   const now = Date.now();
@@ -344,12 +361,12 @@ router.post('/driver/post', authDriver, (req, res) => {
     destObj.name || '目的地', dLat, dLng,
     carType || '4pax', carModel || null,
     passengerNotes ? JSON.stringify(passengerNotes) : null,
-    (isDirect === 'discount85') ? 1 : 0, tip || 0, estimatedFare,
+    (isDirectStr === 'discount85') ? 1 : 0, tip || 0, estimatedFare,
     distanceKm || null, etaMinutes || null,
     pLat, pLng,
     taxiType || 'red', dispatchPhase ?? 3, now, now,
     1, req.userId, passengerPhone || null,
-    (isDirect === 'teishoku') ? 1 : 0, teishokuPrice || null, isDirect || 'standard'
+    (isDirectStr === 'teishoku') ? 1 : 0, teishokuPrice || null, isDirectStr
   );
 
   const order = getOrderById(id);
@@ -364,12 +381,20 @@ router.post('/driver/post', authDriver, (req, res) => {
 
 // ========== 司機取消自己出貨單 ==========
 router.post('/driver/cancel-post/:orderId', authDriver, (req, res) => {
-  const row = db.prepare("SELECT id FROM orders WHERE id = ? AND created_by_driver = 1 AND driver_posted_from = ? AND status = 'searching'")
+  const row = db.prepare("SELECT id, pickup_name, destination_name, car_type, taxi_type FROM orders WHERE id = ? AND created_by_driver = 1 AND driver_posted_from = ? AND status = 'searching'")
     .get(req.params.orderId, req.userId);
   if (!row) {
     return res.status(404).json({ error: '搵唔到呢張出貨單，或者唔係你出嘅' });
   }
   db.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ?").run(req.params.orderId);
+  // 取消成功 → 解除呢條路線嘅 3 分鐘防重鎖，司機可以即刻再出相同路線單（唔會被 429 誤擋）
+  try {
+    const dupKey = `${row.pickup_name || ''}|${row.destination_name || ''}|${row.car_type || ''}|${row.taxi_type || ''}`;
+    const prev = lastDriverPost.get(req.userId);
+    if (prev && prev.key === dupKey) {
+      lastDriverPost.delete(req.userId);
+    }
+  } catch { /* ignore */ }
   res.json({ ok: true });
 });
 
@@ -508,6 +533,16 @@ router.post('/driver/accept/:orderId', authDriver, (req, res) => {
   const order = db.prepare('SELECT * FROM orders WHERE id = ? AND status = ?').get(orderId, 'searching');
   if (!order) {
     return res.status(400).json({ error: '訂單已經俾人接咗或者取消咗' });
+  }
+
+  // 會員級別接單鎖（後端校驗，同前端一致——防繞過前端直接 call API 搶單）
+  // 皇牌（vvip）：即刻接得；VIP：10 秒後先接得；普通：30 秒後先接得
+  const elapsedSec = Math.floor((Date.now() - (order.created_at || Date.now())) / 1000);
+  const vvipActive = !!driver.is_vvip && (!driver.vvip_expires_at || Number(driver.vvip_expires_at) > Date.now());
+  const vipActive = !!driver.is_vip && (!driver.vip_expires_at || Number(driver.vip_expires_at) > Date.now());
+  const minWaitSec = vvipActive ? 0 : vipActive ? 10 : 30;
+  if (minWaitSec > 0 && elapsedSec < minWaitSec) {
+    return res.status(403).json({ error: `仲要等 ${minWaitSec - elapsedSec} 秒先可以接單` });
   }
 
   const now = Date.now();

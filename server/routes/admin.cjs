@@ -32,7 +32,12 @@ router.get('/stats', authAdmin, (req, res) => {
   const vvipCount = db.prepare('SELECT COUNT(*) as c FROM drivers WHERE is_vvip = 1').get().c;
   const vvipPending = db.prepare('SELECT COUNT(*) as c FROM drivers WHERE vvip_applied = 1 AND is_vvip = 0').get().c;
   const totalOrders = db.prepare('SELECT COUNT(*) as c FROM orders').get().c;
-  const todayOrders = db.prepare('SELECT COUNT(*) as c FROM orders WHERE created_at > ?').get(Date.now() - 86400000).c;
+  // 今日訂單＝香港日曆日（00:00 HKT 起），同「每日訂單」表口徑一致
+  // 注意：nowHKT - (nowHKT % 86400000) 得出嘅係「HKT 今日 00:00」嘅 epoch 偏移值，
+  // 一定要再減返 8 小時先係真實 UTC epoch（否則「今日」會由朝早 8 點先開始計，朝早啲單漏計）
+  const nowHKT = Date.now() + 8 * 3600 * 1000;
+  const startOfToday = nowHKT - (nowHKT % 86400000) - 8 * 3600 * 1000;
+  const todayOrders = db.prepare('SELECT COUNT(*) as c FROM orders WHERE created_at >= ?').get(startOfToday).c;
   const totalRevenue = db.prepare("SELECT COALESCE(SUM(actual_fare), 0) as s FROM orders WHERE status IN ('paid','finished')").get().s;
   const passengerCount = db.prepare('SELECT COUNT(*) as c FROM passengers').get().c;
   const onlineDrivers = db.prepare(
@@ -142,6 +147,30 @@ router.post('/members/:id/revoke-operator', authAdmin, (req, res) => {
   const r = db.prepare("DELETE FROM admins WHERE username = ? AND role = 'operator'").run(driver.phone);
   sseHub.publishToAdmin('driver-updated', { driver: { id: driver.id, isOperator: false } });
   res.json({ ok: true, driverId: driver.id, removed: r.changes > 0 });
+});
+
+// ========== 升級做會員（VIP，管理員專用） ==========
+// 會員列表入面一鍵將司機升級做 VIP 會員（可揀 1/3/6/12 個月或永久）
+router.post('/members/:id/set-vip', authAdmin, (req, res) => {
+  const driver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(req.params.id);
+  if (!driver) return res.status(404).json({ error: '司機唔存在' });
+  const { months = 12 } = req.body || {};
+  const DAY = 24 * 3600 * 1000;
+  const isForever = months === 'forever';
+  const n = Number(months) || 12;
+  const expires = isForever ? null : Date.now() + n * 30 * DAY;
+  db.prepare('UPDATE drivers SET is_vip = 1, vip_expires_at = ? WHERE id = ?').run(expires, driver.id);
+  sseHub.publishToAdmin('driver-updated', { driver: { id: driver.id, isVip: true, vipExpiresAt: expires } });
+  res.json({ ok: true, driverId: driver.id, isVip: true, vipExpiresAt: expires });
+});
+
+// ========== 取消會員（VIP，管理員專用） ==========
+router.post('/members/:id/revoke-vip', authAdmin, (req, res) => {
+  const driver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(req.params.id);
+  if (!driver) return res.status(404).json({ error: '司機唔存在' });
+  db.prepare('UPDATE drivers SET is_vip = 0, vip_expires_at = NULL WHERE id = ?').run(driver.id);
+  sseHub.publishToAdmin('driver-updated', { driver: { id: driver.id, isVip: false } });
+  res.json({ ok: true, driverId: driver.id, isVip: false });
 });
 
 // ========== 批准司機（營運主任都做到） ==========
