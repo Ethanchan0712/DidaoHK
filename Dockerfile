@@ -1,22 +1,17 @@
-# 「的道」後端部署用 Dockerfile（Render 免費版）
-# Node 22（同開發機一致）＋跳過無關 scripts ＋強制編譯數據庫組件（避免 139 崩潰）
+# 基礎 Node image
+FROM node:20-alpine
 
-FROM node:22-slim AS runtime
 WORKDIR /app
 
-# better-sqlite3 係原生模組，需要編譯工具
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
-    && rm -rf /var/lib/apt/lists/*
+# 限制 node 記憶體，預防 512MB OOM
+ENV NODE_OPTIONS=--max-old-space-size=400
 
 COPY package.json package-lock.json ./
 
-RUN npm ci --omit-dev
+# ✅ v2.0.84 重點：改用 npm install，唔再用 npm ci
+RUN npm install --omit-dev
 
-# 前端靜態檔（Vite build 產出）——冇咗佢網頁版會 404
-COPY dist ./dist
+COPY . .
 
-COPY server ./server
-
-ENV PORT=10000
-EXPOSE 10000
-CMD ["node", "server/index.cjs"]
+# 啟動後端
+CMD ["node", "server.js"]
