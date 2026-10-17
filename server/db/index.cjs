@@ -416,6 +416,9 @@ db.expireVips = expireVips;
     };
     addD('reject_count', 'reject_count INTEGER DEFAULT 0');          // 拒單次數
     addD('total_accept_count', 'total_accept_count INTEGER DEFAULT 0'); // 接單成功次數
+    // v2.0.83：司機揀自己車型（紅的/綠的 + 4座/6座）
+    addD('taxi_type', 'taxi_type TEXT');        // 'red' / 'green'
+    addD('car_type', 'car_type TEXT');          // '4pax' / '6pax'
 
     const oCols = db.prepare('PRAGMA table_info(orders)').all().map(c => c.name);
     const addO = (name, ddl) => {
