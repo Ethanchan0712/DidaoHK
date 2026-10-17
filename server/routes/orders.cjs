@@ -654,17 +654,6 @@ router.post('/driver/reject/:orderId', authDriver, (req, res) => {
 
 // ========== 司機當前訂單 ==========
 router.get('/driver/current', authDriver, (req, res) => {
-  // v2.0.83 保護機制：自動清理超時殘留單（防止登入彈舊單卡死）——
-  // accepted 超過 2 小時未接客 / picked_up 超過 6 小時未完成 → 自動取消，釋放司機
-  const now = Date.now();
-  try {
-    db.prepare(`UPDATE orders SET status = 'cancelled', finished_at = ?
-      WHERE driver_id = ? AND status = 'accepted' AND accepted_at IS NOT NULL AND accepted_at < ?`)
-      .run(now, req.userId, now - 2 * 60 * 60 * 1000);
-    db.prepare(`UPDATE orders SET status = 'cancelled', finished_at = ?
-      WHERE driver_id = ? AND status = 'picked_up' AND picked_up_at IS NOT NULL AND picked_up_at < ?`)
-      .run(now, req.userId, now - 6 * 60 * 60 * 1000);
-  } catch { /* ignore */ }
   const row = db.prepare(`
     SELECT o.*,
            p.name as passenger_name, p.rating as passenger_rating,
