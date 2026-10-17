@@ -128,7 +128,7 @@ router.post('/passenger/set-password', authPassenger, (req, res) => {
 
 // ========== 司機註冊 ==========
 router.post('/driver/register', (req, res) => {
-  const { username, phone, password, name, plate, carModel, driverLicense, idFront4, referrerPhone } = req.body;
+  const { username, phone, password, name, plate, carModel, driverLicense, idFront4, referrerPhone, taxiType, carType } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: '請輸入帳號同密碼' });
   }
@@ -147,6 +147,10 @@ router.post('/driver/register', (req, res) => {
   if (!/^[569]\d{7}$/.test(phoneNorm)) {
     return res.status(400).json({ error: '請填寫正確電話號碼（8 位數字）' });
   }
+
+  // v2.0.83：司機揀自己車型（紅的/綠的 + 4座/6座）——normalize 防禦亂傳
+  const taxiTypeNorm = taxiType === 'green' ? 'green' : taxiType === 'red' ? 'red' : null;
+  const carTypeNorm = carType === '6pax' || carType === '6-seater' ? '6pax' : carType === '4pax' || carType === '4-seater' ? '4pax' : null;
 
   const existing = db.prepare('SELECT id FROM drivers WHERE username = ? OR phone = ?').get(username, phoneNorm);
   if (existing) {
@@ -170,14 +174,14 @@ router.post('/driver/register', (req, res) => {
   const hash = bcrypt.hashSync(password, 10);
   const now = Date.now();
 
-  db.prepare(`INSERT INTO drivers (id, username, phone, password, name, plate, car_model, driver_license, id_front4, referrer_phone, status, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`).run(
+  db.prepare(`INSERT INTO drivers (id, username, phone, password, name, plate, car_model, driver_license, id_front4, referrer_phone, status, created_at, taxi_type, car_type)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`).run(
     id, username, phoneNorm, hash, name || username,
     plate || '', carModel || '', driverLicense || '', String(idFront4).toUpperCase(),
-    referrerPhoneNorm, now
+    referrerPhoneNorm, now, taxiTypeNorm, carTypeNorm
   );
 
-  const user = db.prepare(`SELECT id, username, phone, name, plate, car_model, driver_license, id_front4, referrer_phone, status, rating, rating_count
+  const user = db.prepare(`SELECT id, username, phone, name, plate, car_model, driver_license, id_front4, referrer_phone, status, rating, rating_count, taxi_type, car_type
                            FROM drivers WHERE id = ?`).get(id);
   const token = signToken({ id, role: 'driver' });
 
