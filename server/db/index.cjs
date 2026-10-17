@@ -428,6 +428,8 @@ db.expireVips = expireVips;
     };
     addO('royal_lock', 'royal_lock INTEGER DEFAULT 0');              // 1=皇牌鎖定期（只限皇牌司機接）
     addO('royal_lock_expire_at', 'royal_lock_expire_at INTEGER');    // 鎖定到期時間戳，過期自動開放
+    // v2.0.81：出貨單嘅出單司機電話（接單司機接單後可以打俾出貨司機）
+    addO('owner_driver_phone', 'owner_driver_phone TEXT');
   } catch (e) {
     console.warn('[DB] migrateV2078Columns:', e.message);
   }

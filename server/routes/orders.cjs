@@ -59,6 +59,8 @@ function orderToJson(row) {
     createdByDriver: !!row.created_by_driver,
     driverPostedFrom: row.driver_posted_from,
     passengerPhone: row.passenger_phone,
+    // v2.0.81：出貨單嘅出單司機電話（接單司機接單後聯絡用；大廳唔會返回）
+    ownerDriverPhone: row.owner_driver_phone || undefined,
     teishoku: !!row.teishoku,
     teishokuPrice: row.teishoku_price,
     isDirect: row.is_direct || 'standard',
@@ -348,6 +350,13 @@ router.post('/driver/post', authDriver, (req, res) => {
   const dLat = destObj.lat ?? 22.28;
   const dLng = destObj.lng ?? 114.16;
 
+  // v2.0.81：出貨單記錄「出單司機電話」，接單司機接單後可以聯絡出貨司機
+  let ownerDriverPhone = null;
+  try {
+    const ownerDriver = db.prepare('SELECT phone FROM drivers WHERE id = ?').get(req.userId);
+    ownerDriverPhone = ownerDriver?.phone || null;
+  } catch { /* ignore */ }
+
   // v2.0.78/79：皇牌直單（is_direct='direct'）＝皇牌單，出單後 10 秒皇牌鎖定期，
   // 鎖定期內只限皇牌(VVIP)司機接，10 秒到期自動開放俾普通司機
   const isRoyalDirect = isDirectStr === 'direct';
@@ -364,8 +373,8 @@ router.post('/driver/post', authDriver, (req, res) => {
     passenger_lat, passenger_lng,
     taxi_type, dispatch_phase, dispatch_phase_started_at, created_at,
     created_by_driver, driver_posted_from, passenger_phone, teishoku, teishoku_price, is_direct,
-    royal_lock, royal_lock_expire_at
-  ) VALUES (?, 'searching', 'driver_post', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    royal_lock, royal_lock_expire_at, owner_driver_phone
+  ) VALUES (?, 'searching', 'driver_post', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     id,
     pickupObj.name || '上車點', pLat, pLng,
     destObj.name || '目的地', dLat, dLng,
@@ -377,7 +386,7 @@ router.post('/driver/post', authDriver, (req, res) => {
     taxiType || 'red', dispatchPhase ?? 3, now, now,
     1, req.userId, passengerPhone || null,
     (isDirectStr === 'teishoku') ? 1 : 0, teishokuPrice || null, isDirectStr,
-    royalLock, royalLockExpireAt
+    royalLock, royalLockExpireAt, ownerDriverPhone
   );
 
   const order = getOrderById(id);
@@ -486,7 +495,14 @@ router.get('/driver/hall', authDriver, (req, res) => {
   });
 
   res.json({
-    orders: filtered.map(orderToJson),
+    // v2.0.81 私隱保護：大廳訂單唔帶任何電話（passenger_phone / owner_driver_phone），
+    // 司機接單之後先喺訂單詳情見到電話
+    orders: filtered.map((row) => {
+      const safe = orderToJson(row);
+      delete safe.passengerPhone;
+      delete safe.ownerDriverPhone;
+      return safe;
+    }),
     driverIsVvip: isVvip,
     phaseRanges: DISPATCH_PHASE_RANGES,
     phaseDurations: DISPATCH_PHASE_DURATIONS,
