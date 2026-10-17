@@ -1,0 +1,2 @@
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/web-Ba3B_Fe_.js","assets/index-BSrbCU9j.js","assets/rolldown-runtime-B0Z9INg1.js","assets/radix-CIoY7B93.js","assets/index-CN_aYETQ.css"])))=>i.map(i=>d[i]);
+import{n as e,r as t}from"./index-BSrbCU9j.js";var n=e(`SpeechRecognition`,{web:()=>t(()=>import(`./web-Ba3B_Fe_.js`).then(e=>new e.SpeechRecognitionWeb),__vite__mapDeps([0,1,2,3,4]))});export{n as SpeechRecognition};
