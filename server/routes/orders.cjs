@@ -374,7 +374,7 @@ router.post('/driver/post', authDriver, (req, res) => {
     taxi_type, dispatch_phase, dispatch_phase_started_at, created_at,
     created_by_driver, driver_posted_from, passenger_phone, teishoku, teishoku_price, is_direct,
     royal_lock, royal_lock_expire_at, owner_driver_phone
-  ) VALUES (?, 'searching', 'driver_post', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  ) VALUES (?, 'searching', 'driver_post', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     id,
     pickupObj.name || '上車點', pLat, pLng,
     destObj.name || '目的地', dLat, dLng,
@@ -786,11 +786,10 @@ router.post('/driver/rate', authDriver, (req, res) => {
     }
   }
 
-  // 檢查雙方評分
-  const updated = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
-  if (updated.driver_rating) {
-    db.prepare("UPDATE orders SET status = 'finished', finished_at = ? WHERE id = ?").run(Date.now(), orderId);
-  }
+  // v2.0.85 修復「確認完成無限彈卡」：司機撳「確認完成」＝單結算完，即刻轉 finished。
+  // 舊邏輯要等「雙方評分齊」先轉 finished——乘客唔評分嘅話單會永遠停留 paid/completed，
+  // 前端任何 localStorage fallback / 重新登入都會將佢復活，再彈返「確認完成」畫面無限循環。
+  db.prepare("UPDATE orders SET status = 'finished', finished_at = ? WHERE id = ?").run(Date.now(), orderId);
 
   sseHub.publishToOrder(orderId, 'passenger-rated', { orderId, rating });
 
