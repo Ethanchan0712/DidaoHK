@@ -1,7 +1,8 @@
 const express = require('express');
 const db = require('../db/index.cjs');
 const sseHub = require('../sse/hub.cjs');
-const { authPassenger, authDriver, authAdmin } = require('../middleware/auth.cjs');
+const { authPassenger, authDriver, authAdmin, authAny } = require('../middleware/auth.cjs');
+const { rateLimit } = require('../middleware/rate-limit.cjs');
 const { sendNewOrderPush } = require('../lib/push.cjs');
 
 const router = express.Router();
@@ -96,7 +97,7 @@ function getOrderById(id) {
 }
 
 // ========== 乘客叫車 ==========
-router.post('/passenger/request', authPassenger, (req, res) => {
+router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authPassenger, (req, res) => {
   const { 
     pickup, destination, carType, hasDiscount, tipAmount, estimatedFare, distanceKm, etaMinutes, taxiType,
     pickupName, pickupLat, pickupLng, destinationName, destinationLat, destinationLng,
@@ -317,7 +318,7 @@ setInterval(refreshDispatchPhases, 1000);
 // 防重複出單：同一司機 180 秒內唔可以出相同路線單
 // （雙擊／語音出單重複觸發／出單後冇聲再講多次——全部擋住）
 const lastDriverPost = new Map(); // driverId -> { time, key }
-router.post('/driver/post', authDriver, (req, res) => {
+router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authDriver, (req, res) => {
   const {
     pickup, destination, carType, carModel, estimatedFare, taxiType,
     isDirect, tip, dispatchPhase, teishokuPrice, passengerPhone, distanceKm, etaMinutes,
@@ -946,7 +947,7 @@ async function reverseGeocodeStreet(lat, lng) {
 }
 
 // ========== 司機報告位置大水 ==========
-router.post('/driver/report-flood', authDriver, async (req, res) => {
+router.post('/driver/report-flood', rateLimit({ limit: 5, windowMs: 60 * 1000 }), authDriver, async (req, res) => {
   const driver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(req.userId);
   if (!driver) return res.status(404).json({ error: '司機唔存在' });
 
@@ -992,8 +993,9 @@ router.get('/:id', (req, res) => {
 });
 
 // ========== SSE 訂閱 ==========
-router.get('/stream/order/:orderId', (req, res) => {
-  // 乘客同司機都可以睇，唔做嚴格驗證，認 orderId 就夠
+router.get('/stream/order/:orderId', authAny, (req, res) => {
+  // v2.0.92：加咗 authAny——訂單 stream 含乘客位置/電話等敏感資料，
+  // 以前「認 orderId 就夠」，orderId 洩漏（截獲/日誌）就可以偷睇單。而家必須登入先訂閱。
   const { orderId } = req.params;
   sseHub.subscribe(req, res, 'order', orderId);
 });

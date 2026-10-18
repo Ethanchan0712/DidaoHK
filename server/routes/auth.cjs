@@ -3,15 +3,20 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/index.cjs');
 const { signToken, authPassenger, authDriver } = require('../middleware/auth.cjs');
+const { rateLimit } = require('../middleware/rate-limit.cjs');
 
 const router = express.Router();
+
+// v2.0.92：登入/註冊加 rate limit 防暴力破解（每 IP 每路由）
+const loginLimiter = rateLimit({ limit: 15, windowMs: 60 * 1000 });      // 15 次/分鐘
+const registerLimiter = rateLimit({ limit: 8, windowMs: 60 * 60 * 1000 }); // 8 次/小時
 
 function genId(prefix) {
   return prefix + '_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 }
 
 // ========== 乘客註冊 ==========
-router.post('/passenger/register', (req, res) => {
+router.post('/passenger/register', registerLimiter, (req, res) => {
   const { username, phone, password, name } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: '請輸入帳號同密碼' });
@@ -39,7 +44,7 @@ router.post('/passenger/register', (req, res) => {
 });
 
 // ========== 乘客登入 ==========
-router.post('/passenger/login', (req, res) => {
+router.post('/passenger/login', loginLimiter, (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: '請輸入帳號同密碼' });
@@ -71,7 +76,7 @@ router.post('/passenger/login', (req, res) => {
 
 // ========== 乘客電話登入（階段一 mock SMS）==========
 // 階段一：唔使真 SMS，萬能驗證碼 123456；之後接真 SMS 服務
-router.post('/passenger/send-code', (req, res) => {
+router.post('/passenger/send-code', loginLimiter, (req, res) => {
   const { phone } = req.body;
   if (!phone || !/^[0-9+\-\s]{6,15}$/.test(String(phone))) {
     return res.status(400).json({ error: '請輸入正確電話號碼' });
@@ -79,7 +84,7 @@ router.post('/passenger/send-code', (req, res) => {
   res.json({ ok: true, message: '驗證碼已發送（萬能驗證碼：123456）', mockCode: '123456' });
 });
 
-router.post('/passenger/phone-login', (req, res) => {
+router.post('/passenger/phone-login', loginLimiter, (req, res) => {
   const { phone, code } = req.body;
   if (!phone || !code) {
     return res.status(400).json({ error: '請輸入電話同驗證碼' });
@@ -127,7 +132,7 @@ router.post('/passenger/set-password', authPassenger, (req, res) => {
 });
 
 // ========== 司機註冊 ==========
-router.post('/driver/register', (req, res) => {
+router.post('/driver/register', registerLimiter, (req, res) => {
   const { username, phone, password, name, plate, carModel, driverLicense, idFront4, referrerPhone, taxiType, carType } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: '請輸入帳號同密碼' });
@@ -193,7 +198,7 @@ router.post('/driver/register', (req, res) => {
 });
 
 // ========== 司機登入 ==========
-router.post('/driver/login', (req, res) => {
+router.post('/driver/login', loginLimiter, (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: '請輸入帳號同密碼' });
@@ -340,7 +345,7 @@ router.post('/driver/update-profile', authDriver, (req, res) => {
 });
 
 // ========== 管理員登入 ==========
-router.post('/admin/login', (req, res) => {
+router.post('/admin/login', loginLimiter, (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: '請輸入帳號同密碼' });

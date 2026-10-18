@@ -1,5 +1,6 @@
 // ========== 租車市場 API（出租單俾所有人睇到） ==========
 const express = require('express');
+const { rateLimit } = require('../middleware/rate-limit.cjs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const db = require('../db/index.cjs');
@@ -72,7 +73,7 @@ router.get('/mine', (req, res) => {
 });
 
 // 發佈出租單
-router.post('/', (req, res) => {
+router.post('/', rateLimit({ limit: 10, windowMs: 60 * 60 * 1000 }), (req, res) => {
   try {
     const b = req.body || {};
     // 空 body 唔可以入庫變垃圾 post（唔可以 200 收空資料）

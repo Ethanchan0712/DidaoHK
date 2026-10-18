@@ -5,10 +5,40 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
-app.use((req, res, next) => { console.log('[REQ]', new Date().toISOString().slice(11,19), req.method, req.originalUrl); next(); });
-app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '10mb' }));
+// v2.0.92 安全加固：
+// 1) 日誌唔記錄 query string（SSE/訂閱 token 經 query 傳遞，記錄落 log 會洩漏）
+app.use((req, res, next) => {
+  const url = req.path || '/';
+  console.log('[REQ]', new Date().toISOString().slice(11, 19), req.method, url);
+  next();
+});
+// 2) 基本安全 headers（手寫，避免多裝 helmet 依賴）
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
+});
+// 3) CORS 白名單——唔再 echo 任何 origin（避免任意網站帶 credentials 打 API）
+const ALLOWED_ORIGINS = new Set([
+  'https://didaohk.com',
+  'http://localhost:3001',
+  'http://localhost:3005',
+  'http://localhost:5173',
+  'http://localhost:8080',
+  'capacitor://localhost',
+  'https://localhost',
+]);
+app.use(cors({
+  origin(origin, cb) {
+    // 冇 Origin（curl／同源 SSR／原生 app 內部請求）都放行
+    if (!origin || ALLOWED_ORIGINS.has(origin)) return cb(null, true);
+    return cb(null, false);
+  },
+  credentials: true,
+}));
+app.use(express.json({ limit: '1mb' })); // v2.0.92：10mb 太大，正常 API 請求都係 KB 級
 // 統一補 body：無 JSON body 嘅 POST（無 Content-Type / 空 body）都會令 req.body 係 undefined，
 // 任何 handler destructure req.body 即爆 TypeError→500。呢度補返空物件，杜絕成類 500。
 app.use((req, res, next) => { req.body = req.body || {}; next(); });

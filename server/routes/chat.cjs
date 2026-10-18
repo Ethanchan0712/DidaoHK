@@ -1,7 +1,8 @@
 const express = require('express');
 const db = require('../db/index.cjs');
 const sseHub = require('../sse/hub.cjs');
-const { authPassenger, authDriver, authAdmin } = require('../middleware/auth.cjs');
+const { authPassenger, authDriver, authAdmin, authAny } = require('../middleware/auth.cjs');
+const { rateLimit } = require('../middleware/rate-limit.cjs');
 
 const router = express.Router();
 
@@ -10,7 +11,7 @@ function genId() {
 }
 
 // ========== 發送訊息（乘客） ==========
-router.post('/passenger/send', authPassenger, (req, res) => {
+router.post('/passenger/send', rateLimit({ limit: 30, windowMs: 60 * 1000 }), authPassenger, (req, res) => {
   const { orderId, text } = req.body;
   if (!orderId || !text) return res.status(400).json({ error: '參數唔完整' });
 
@@ -33,7 +34,7 @@ router.post('/passenger/send', authPassenger, (req, res) => {
 });
 
 // ========== 發送訊息（司機） ==========
-router.post('/driver/send', authDriver, (req, res) => {
+router.post('/driver/send', rateLimit({ limit: 30, windowMs: 60 * 1000 }), authDriver, (req, res) => {
   const { orderId, text } = req.body;
   if (!orderId || !text) return res.status(400).json({ error: '參數唔完整' });
 
@@ -56,7 +57,8 @@ router.post('/driver/send', authDriver, (req, res) => {
 });
 
 // ========== 攞訂單訊息列表 ==========
-router.get('/order/:orderId', (req, res) => {
+router.get('/order/:orderId', authAny, (req, res) => {
+  // v2.0.92：加 authAny——聊天記錄都係敏感資料，唔可以公開讀
   const rows = db.prepare(`
     SELECT id, order_id, sender_role as \"from\", text, timestamp
     FROM chat_messages

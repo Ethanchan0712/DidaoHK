@@ -1,7 +1,10 @@
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const db = require('../db/index.cjs');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dikdou_hk_taxi_secret_key_2024';
+// v2.0.92：JWT_SECRET 唔可以再用公開 fallback——任何人知 secret 就可以偽造 admin token。
+// 若環境變數未設，就每次啟動生成隨機 secret（攻擊者無法預測；代價係重啟後舊 token 失效，用戶重新登入一次）
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
 
 function signToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
@@ -91,4 +94,37 @@ function authOperator(req, res, next) {
   }
 }
 
-module.exports = { signToken, authPassenger, authDriver, authAdmin, authOperator, JWT_SECRET };
+// v2.0.92：任一登入角色（乘客/司機/管理員）通過——用喺訂單狀態 stream / chat 呢啲
+// 乘客同司機都要 subscribe 嘅端點。只驗 token 有效性＋對應帳號仍然存在，唔限制角色。
+function authAny(req, res, next) {
+  const token = getToken(req);
+  if (!token) {
+    return res.status(401).json({ error: '未登入' });
+  }
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.role === 'passenger') {
+      const user = db.prepare('SELECT id FROM passengers WHERE id = ?').get(decoded.id);
+      if (!user) return res.status(401).json({ error: '帳號不存在' });
+      req.userId = user.id;
+      req.userRole = 'passenger';
+    } else if (decoded.role === 'driver') {
+      const user = db.prepare('SELECT id FROM drivers WHERE id = ?').get(decoded.id);
+      if (!user) return res.status(401).json({ error: '帳號不存在' });
+      req.userId = user.id;
+      req.userRole = 'driver';
+    } else if (decoded.role === 'admin' || decoded.role === 'operator') {
+      const user = db.prepare('SELECT id FROM admins WHERE id = ?').get(decoded.id);
+      if (!user) return res.status(401).json({ error: '帳號不存在' });
+      req.userId = user.id;
+      req.userRole = decoded.role;
+    } else {
+      return res.status(401).json({ error: '登入已過期' });
+    }
+    next();
+  } catch {
+    return res.status(401).json({ error: '登入已過期' });
+  }
+}
+
+module.exports = { signToken, authPassenger, authDriver, authAdmin, authOperator, authAny, JWT_SECRET };
