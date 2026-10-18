@@ -196,7 +196,7 @@ router.get('/passenger/current', authPassenger, (req, res) => {
     FROM orders o
     LEFT JOIN passengers p ON o.passenger_id = p.id
     LEFT JOIN drivers d ON o.driver_id = d.id
-    WHERE o.passenger_id = ? AND o.status IN ('searching','accepted','picked_up','completed','paid')
+    WHERE o.passenger_id = ? AND o.status IN ('searching','accepted','picked_up')
     ORDER BY o.created_at DESC
     LIMIT 1
   `).get(req.userId);
@@ -214,7 +214,7 @@ router.get('/passenger/history', authPassenger, (req, res) => {
     FROM orders o
     LEFT JOIN passengers p ON o.passenger_id = p.id
     LEFT JOIN drivers d ON o.driver_id = d.id
-    WHERE o.passenger_id = ? AND o.status IN ('paid','finished')
+    WHERE o.passenger_id = ? AND o.status IN ('completed','paid','finished')
     ORDER BY o.created_at DESC
     LIMIT 20
   `).all(req.userId);
@@ -398,7 +398,8 @@ router.post('/driver/post', authDriver, (req, res) => {
 
   // v2.0.88：出貨單都 SSE 即刻廣播俾所有在線司機——
   // 之前得乘客叫車單先有即時廣播，司機出貨單要靠 polling 先見到，其他司機冇「新貨單」即時語音播報
-  sseHub.publishToDriverHall('new-order', { order });
+  // v2.0.89：排除出單司機自己（自己已有「已出單」語音回饋，唔好連讀「新貨單」）
+  sseHub.publishToDriverHall('new-order', { order }, req.userId);
 
   res.json({ order });
 });

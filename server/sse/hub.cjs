@@ -28,6 +28,8 @@ class SSEHub {
       }
       this.orderChannels.get(key).add(res);
     } else if (channel === 'driver-hall') {
+      // 記低每個 driver-hall 連線屬於邊個司機（用嚟廣播時排除出單司機自己）
+      res.__driverId = req.userId || null;
       this.driverHallClients.add(res);
     } else if (channel === 'admin') {
       this.adminClients.add(res);
@@ -71,10 +73,12 @@ class SSEHub {
     }
   }
 
-  publishToDriverHall(event, data) {
+  publishToDriverHall(event, data, excludeDriverId) {
     if (this.driverHallClients.size === 0) return;
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of this.driverHallClients) {
+      // v2.0.89：出單司機自己唔收自己張單嘅 new-order 廣播（避免「已出單」＋「新貨單」連讀兩句）
+      if (excludeDriverId && res.__driverId === excludeDriverId) continue;
       try { res.write(payload); } catch { /* ignore */ }
     }
   }
