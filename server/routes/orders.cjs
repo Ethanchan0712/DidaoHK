@@ -396,6 +396,10 @@ router.post('/driver/post', authDriver, (req, res) => {
     console.warn('[push] 出貨 push error:', err.message)
   );
 
+  // v2.0.88：出貨單都 SSE 即刻廣播俾所有在線司機——
+  // 之前得乘客叫車單先有即時廣播，司機出貨單要靠 polling 先見到，其他司機冇「新貨單」即時語音播報
+  sseHub.publishToDriverHall('new-order', { order });
+
   res.json({ order });
 });
 
