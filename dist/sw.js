@@ -1,8 +1,9 @@
 /* 的道 DikDou PWA Service Worker
- * 基本離線快取：快取靜態資源 + App Shell
+ * 更新優先策略（v2）：HTML/導航 network-first → 更新後即刻見到新版，唔使清瀏覽記錄
+ * 靜態資源（hashed assets）cache-first → 保持快速載入
  */
 
-const CACHE_NAME = 'dikdou-cache-v1';
+const CACHE_NAME = 'dikdou-cache-v2';
 const APP_SHELL = ['/'];
 
 // 安裝：快取 App Shell
@@ -76,6 +77,30 @@ self.addEventListener('fetch', (event) => {
   // 略過 API 請求（POST 已過濾，呢度處理跨域 SSE 等）
   if (request.url.includes('/api/') || request.url.includes('/events')) return;
 
+  const reqUrl = new URL(request.url);
+  const isNavigate = request.mode === 'navigate';
+  const isHtml = reqUrl.pathname === '/' || reqUrl.pathname.endsWith('.html');
+
+  // HTML／導航：network-first——更新後即刻攞最新版（離線先 fallback 快取）
+  if (isNavigate || isHtml) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then((cache) =>
+        fetch(request)
+          .then((response) => {
+            if (response && response.status === 200) {
+              cache.put(request, response.clone()).catch(() => {});
+            }
+            return response;
+          })
+          .catch(() =>
+            cache.match(request).then((cached) => cached || cache.match('/'))
+          )
+      )
+    );
+    return;
+  }
+
+  // 靜態資源（/assets/ 帶 hash 檔名）：cache-first + 背景更新——保持快
   event.respondWith(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.match(request).then((cached) => {

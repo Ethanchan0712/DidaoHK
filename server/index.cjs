@@ -94,6 +94,14 @@ app.get('/.well-known/assetlinks.json', (req, res) => {
 const clientDist = path.join(__dirname, '..', 'dist');
 const fs = require('fs');
 if (fs.existsSync(clientDist)) {
+  // v2.0.99：sw.js / index.html 唔緩存——確保更新後即刻生效，唔使清瀏覽記錄
+  app.use((req, res, next) => {
+    const p = req.path;
+    if (p === '/sw.js' || p === '/' || p === '/index.html') {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+    next();
+  });
   app.use(express.static(clientDist));
   // SPA fallback
   app.use((req, res, next) => {

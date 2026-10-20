@@ -1,0 +1,43 @@
+📀 數據庫路徑: /home/user/Doubao/chats/38443801065719810/dikdou-v2.0.91-package/server/db/taxi.db
+[DB] flood_reports table ready
+[DB] rental_posts table ready
+[DB] rental_car_requests table ready
+[cleanup] 幽靈單自動清理已啟動（90 分鐘無心跳自動收尾）
+
+🚕 的道後端服務啟動成功！
+   端口: 3005
+   API:  http://localhost:3005/api/
+   管理員: admin / lovevivi815
+
+[REQ] 16:08:55 HEAD /
+[REQ] 16:08:55 HEAD /sw.js
+[REQ] 16:08:55 HEAD /assets/index-CvD5IrMq.js
+[REQ] 16:09:05 GET /
+[REQ] 16:09:05 GET /assets/index-CuW56eSz.js
+[REQ] 16:09:05 GET /assets/rolldown-runtime-B0Z9INg1.js
+[REQ] 16:09:05 GET /assets/index-BkJtDnaC.css
+[REQ] 16:09:05 GET /assets/radix-CIoY7B93.js
+[REQ] 16:09:05 GET /manifest.json
+[REQ] 16:09:06 GET /sw.js
+[REQ] 16:09:06 GET /
+[REQ] 16:09:19 GET /
+[REQ] 16:09:19 GET /assets/index-BkJtDnaC.css
+[REQ] 16:09:19 GET /assets/index-CuW56eSz.js
+[REQ] 16:09:19 GET /assets/rolldown-runtime-B0Z9INg1.js
+[REQ] 16:09:19 GET /assets/radix-CIoY7B93.js
+[REQ] 16:09:19 GET /manifest.json
+[REQ] 16:09:21 GET /sw.js
+[REQ] 16:09:22 GET /
+[REQ] 16:09:22 GET /assets/index-BkJtDnaC.css
+[REQ] 16:09:22 GET /assets/index-CuW56eSz.js
+[REQ] 16:09:22 GET /assets/rolldown-runtime-B0Z9INg1.js
+[REQ] 16:09:22 GET /assets/radix-CIoY7B93.js
+[REQ] 16:09:22 GET /manifest.json
+[REQ] 16:09:23 GET /sw.js
+[REQ] 16:09:41 GET /
+[REQ] 16:09:41 GET /assets/index-CuW56eSz.js
+[REQ] 16:09:41 GET /assets/index-BkJtDnaC.css
+[REQ] 16:09:41 GET /assets/rolldown-runtime-B0Z9INg1.js
+[REQ] 16:09:41 GET /assets/radix-CIoY7B93.js
+[REQ] 16:09:41 GET /manifest.json
+[REQ] 16:09:42 GET /sw.js
