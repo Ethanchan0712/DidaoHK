@@ -47,7 +47,32 @@ router.post('/unsubscribe', authDriver, (req, res) => {
 // 查我嘅訂閱狀態
 router.get('/status', authDriver, (req, res) => {
   const subs = db.getPushByDriver(req.userId);
-  res.json({ ok: true, subscribed: subs.length > 0, count: subs.length, enabled: !!VAPID.publicKey });
+  const fcm = db.getFcmTokensByDriver(req.userId);
+  res.json({ ok: true, subscribed: subs.length > 0, count: subs.length, enabled: !!VAPID.publicKey, fcmTokens: fcm.length });
+});
+
+// ===== v2.1.0：App（FCM）推送 token 註冊／退訂 =====
+router.post('/fcm-token', authDriver, (req, res) => {
+  try {
+    const { token, platform } = req.body || {};
+    if (!token) return res.status(400).json({ error: '缺少 FCM token' });
+    const saved = db.saveFcmToken(req.userId, token, platform === 'ios' ? 'ios' : 'android');
+    if (!saved) return res.status(500).json({ error: '儲存失敗' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.warn('[push] fcm-token error:', e.message);
+    res.status(500).json({ error: '註冊失敗' });
+  }
+});
+
+router.post('/fcm-unregister', authDriver, (req, res) => {
+  try {
+    const { token } = req.body || {};
+    if (token) db.removeFcmToken(token);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: '退訂失敗' });
+  }
 });
 
 // 測試推送（管理員用——發一條測試通知俾指定司機）

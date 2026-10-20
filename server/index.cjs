@@ -138,3 +138,13 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`   API:  http://localhost:${PORT}/api/`);
   console.log(`   管理員: admin / lovevivi815\n`);
 });
+
+// 預約叫車排程器（v2.1.0）：每 30 秒檢查，提前 15 分鐘派單
+try {
+  const ordersRouter = require('./routes/orders.cjs');
+  if (typeof ordersRouter.startOrderScheduler === 'function') {
+    ordersRouter.startOrderScheduler();
+  }
+} catch (e) {
+  console.warn('[scheduler] 啟動失敗:', e.message);
+}

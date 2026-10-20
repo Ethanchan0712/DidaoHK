@@ -56,6 +56,8 @@ function orderToJson(row) {
     taxiType: row.taxi_type,
     driverRating: row.driver_rating,
     passengerRating: row.passenger_rating,
+    scheduledAt: row.scheduled_at || undefined,     // 預約叫車（毫秒時間戳）
+    isScheduled: !!row.is_scheduled,                // 係咪預約單
     // 司機出貨單（v3）
     createdByDriver: !!row.created_by_driver,
     driverPostedFrom: row.driver_posted_from,
@@ -101,7 +103,8 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
   const { 
     pickup, destination, carType, hasDiscount, tipAmount, estimatedFare, distanceKm, etaMinutes, taxiType,
     pickupName, pickupLat, pickupLng, destinationName, destinationLat, destinationLng,
-    discount, tip, carModel, passengerNotes
+    discount, tip, carModel, passengerNotes,
+    scheduledAt
   } = req.body;
 
   // Support both flat and nested formats
@@ -114,15 +117,21 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
     return res.status(400).json({ error: '參數唔完整' });
   }
 
-  // 檢查乘客有冇進行中訂單（已完成嘅單唔算，可以再出單）
+  // 檢查乘客有冇進行中訂單（已完成嘅單唔算，可以再出單；預約單未到都算進行中）
   const active = db.prepare(`SELECT id FROM orders
-    WHERE passenger_id = ? AND status IN ('searching','accepted','picked_up')`).get(req.userId);
+    WHERE passenger_id = ? AND status IN ('searching','accepted','picked_up','scheduled')`).get(req.userId);
   if (active) {
     return res.status(400).json({ error: '你有進行中嘅訂單，請先完成' });
   }
 
   const id = genOrderId();
   const now = Date.now();
+  // 預約叫車：scheduledAt（毫秒）→ 預約單狀態；否則即時單
+  const schedTs = scheduledAt ? Math.floor(Number(scheduledAt)) : null;
+  if (schedTs && schedTs < now + 5 * 60 * 1000) {
+    return res.status(400).json({ error: '預約時間太近，請改為即時叫車或揀更遲嘅時間' });
+  }
+  const orderStatus = schedTs ? 'scheduled' : 'searching';
   const pLat = pickupObj.lat ?? 22.3;
   const pLng = pickupObj.lng ?? 114.17;
   // destination 同 pickup 一樣要 fallback：前端 geocode 失敗（例如自訂地址查唔到座標）
@@ -139,9 +148,10 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
     passenger_lat, passenger_lng,
     taxi_type, dispatch_phase, dispatch_phase_started_at, created_at,
     passenger_phone,
-    created_by_driver, driver_posted_from
-  ) VALUES (?, 'searching', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 1, ?)`).run(
-    id, req.userId,
+    created_by_driver, driver_posted_from,
+    scheduled_at, is_scheduled
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 1, ?, ?, ?)`).run(
+    id, orderStatus, req.userId,
     pickupObj.name || '上車點', pLat, pLng,
     destObj.name || '目的地', dLat, dLng,
     carType || '4pax', carModel || null, passengerNotes ? JSON.stringify(passengerNotes) : null,
@@ -150,10 +160,16 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
     pLat, pLng,
     taxiType || 'red', now, now,
     req.user.phone || null,
-    req.userId
+    req.userId,
+    schedTs, schedTs ? 1 : 0
   );
 
   const order = getOrderById(id);
+
+  // 預約單：唔即時派單——等排程器喺預約時間前 15 分鐘先轉做派單（見 startOrderScheduler）
+  if (schedTs) {
+    return res.json({ order });
+  }
 
   // VVIP 分級派單：首先推送到所有在線 VVIP 司機
   // 普通司機要等 dispatch phase 升級先睇到（由前端顯示倒數 + 定時輪詢升級）
@@ -197,7 +213,7 @@ router.get('/passenger/current', authPassenger, (req, res) => {
     FROM orders o
     LEFT JOIN passengers p ON o.passenger_id = p.id
     LEFT JOIN drivers d ON o.driver_id = d.id
-    WHERE o.passenger_id = ? AND o.status IN ('searching','accepted','picked_up')
+    WHERE o.passenger_id = ? AND o.status IN ('searching','accepted','picked_up','scheduled')
     ORDER BY o.created_at DESC
     LIMIT 1
   `).get(req.userId);
@@ -1043,6 +1059,40 @@ function cleanupStaleOrders() {
 setInterval(cleanupStaleOrders, 60 * 1000); // 每分鐘檢查一次
 console.log('[cleanup] 幽靈單自動清理已啟動（90 分鐘無心跳自動收尾）');
 
+// ========== 預約叫車排程器 ==========
+// 預約單（status='scheduled'）喺預約時間前 15 分鐘自動轉做即時派單（'searching'），
+// 並推送到 VVIP 司機＋司機大廳＋Web Push——同即時單一樣嘅派單流程。
+function startOrderScheduler() {
+  setInterval(() => {
+    try {
+      const now = Date.now();
+      const due = db.prepare(
+        "SELECT id FROM orders WHERE status = 'scheduled' AND scheduled_at <= ?"
+      ).all(now + 15 * 60 * 1000);
+      if (!due.length) return;
+      for (const r of due) {
+        db.prepare("UPDATE orders SET status = 'searching', dispatch_phase_started_at = ?, dispatch_phase = 0 WHERE id = ?")
+          .run(now, r.id);
+        const order = getOrderById(r.id);
+        if (!order) continue;
+        const vvipDrivers = db.prepare(
+          "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved'"
+        ).all();
+        vvipDrivers.forEach(d => sseHub.publishToDriver(d.id, 'new-vvip-order', { order }));
+        sseHub.publishToDriverHall('new-order', { order });
+        sendNewOrderPush(db, order).catch(err => console.warn('[scheduler-push]', err.message));
+        console.log('[scheduler] 預約單開始派單:', r.id, 'scheduled_at=', order.scheduledAt);
+      }
+    } catch (e) {
+      console.error('[scheduler]', e.message);
+    }
+  }, 30 * 1000);
+  console.log('[scheduler] 預約叫車排程已啟動（每 30 秒檢查，提前 15 分鐘派單）');
+}
+
+module.exports = router;
+module.exports.startOrderScheduler = startOrderScheduler;
+
 // ========== 乘客投訴（存落 server，管理員後台睇到） ==========
 router.post('/passenger/complaint', authPassenger, (req, res) => {
   const { orderId, type, description } = req.body;
@@ -1092,5 +1142,3 @@ router.post('/admin/complaint/resolve', authAdmin, (req, res) => {
   db.prepare('UPDATE orders SET complaint = ?, complaint_reply = ? WHERE id = ?').run(JSON.stringify(c), reply || '', orderId);
   res.json({ ok: true });
 });
-
-module.exports = router;

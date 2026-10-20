@@ -15,6 +15,61 @@ try {
 
 const MAX_TTL = 300; // 5 分鐘：單只推一次，過期唔重推
 
+// ===== v2.1.0：App（FCM）推送——有 FCM_SERVICE_ACCOUNT（service account JSON）先啟用 =====
+let fcmApp = null;
+let fcmWarned = false;
+function getFcmApp() {
+  if (fcmApp) return fcmApp;
+  const credJson = process.env.FCM_SERVICE_ACCOUNT;
+  if (!credJson) {
+    if (!fcmWarned) {
+      console.warn('[fcm] 未設定 FCM_SERVICE_ACCOUNT——App（FCM）推送未啟用（Web Push 照常）');
+      fcmWarned = true;
+    }
+    return null;
+  }
+  try {
+    const admin = require('firebase-admin');
+    fcmApp = admin.initializeApp({ credential: admin.credential.cert(JSON.parse(credJson)) });
+    console.log('[fcm] Firebase 已初始化——App 推送啟用');
+    return fcmApp;
+  } catch (e) {
+    console.warn('[fcm] 初始化失敗:', e.message);
+    return null;
+  }
+}
+
+async function sendFcmToDrivers(db, order, opts = {}) {
+  const app = getFcmApp();
+  if (!app) return { fcm: 'disabled' };
+  const tokens = db.getAllFcmTokens();
+  if (!tokens || tokens.length === 0) return { fcm: 0 };
+  const title = opts.title || '🚕 新單！';
+  const pickup = order.pickup?.name || order.pickupName || '上車地點';
+  const dest = order.destination?.name || order.destinationName || '目的地';
+  const fare = order.estimatedFare || order.estimated_fare || 0;
+  const fareText = fare > 0 ? `約 HK$${fare}` : '跳錶';
+  const message = {
+    tokens: tokens.map((t) => t.token),
+    notification: { title, body: `${pickup} → ${dest} ｜ ${fareText}` },
+    data: {
+      orderId: order.id, pickup, dest, fare: String(fare), url: '/driver/hall',
+    },
+    android: { priority: 'high', notification: { channelId: 'new-order', sound: 'default' } },
+  };
+  try {
+    const r = await app.messaging().sendEachForMulticast(message);
+    // 失效 token 自動清走
+    r.responses.forEach((resp, i) => {
+      if (!resp.success && tokens[i]) db.removeFcmToken(tokens[i].token);
+    });
+    return { fcm: r.successCount };
+  } catch (e) {
+    console.warn('[fcm] 發送失敗:', e.message);
+    return { fcm: 0 };
+  }
+}
+
 // 計兩點直線距離（公里，Haversine）
 function haversineKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
@@ -85,6 +140,8 @@ async function sendNewOrderPush(db, order, opts = {}) {
   } else {
     console.log(`[push] 新單 ${order.id}: 成功 ${results.sent}`);
   }
+  // v2.1.0：App（FCM）推送——fire-and-forget，同 Web Push 並行
+  sendFcmToDrivers(db, order, opts).catch(() => {});
   return results;
 }
 
@@ -111,4 +168,4 @@ async function sendOrderUpdatePush(db, order, title, body) {
   return results;
 }
 
-module.exports = { VAPID, sendNewOrderPush, sendOrderUpdatePush };
+module.exports = { VAPID, sendNewOrderPush, sendOrderUpdatePush, sendFcmToDrivers };

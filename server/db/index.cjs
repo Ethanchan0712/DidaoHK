@@ -161,6 +161,8 @@ CREATE INDEX IF NOT EXISTS idx_orders_dispatch ON orders(dispatch_phase, status)
   add('is_direct', 'is_direct TEXT DEFAULT \'standard\'');
   add('complaint', 'complaint TEXT');
   add('complaint_reply', 'complaint_reply TEXT');
+  add('scheduled_at', 'scheduled_at INTEGER');       // 預約叫車：預約時間（毫秒）；NULL=即時單
+  add('is_scheduled', 'is_scheduled INTEGER DEFAULT 0');
 })();
 
 // ========== 兼容舊數據庫：drivers 補 id_front4 ==========
@@ -466,6 +468,16 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_push_driver ON push_subscriptions(driver_id);
+
+-- v2.1.0：App（FCM）推送 token 表——司機喺 Android/iOS App 登入後註冊
+CREATE TABLE IF NOT EXISTS driver_fcm_tokens (
+  driver_id INTEGER NOT NULL,
+  token TEXT NOT NULL PRIMARY KEY,
+  platform TEXT DEFAULT 'android',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fcm_driver ON driver_fcm_tokens(driver_id);
 `);
 db.getPushByDriver = (driverId) => {
   try {
@@ -493,6 +505,36 @@ db.removePushSubscription = (endpoint) => {
   try {
     return db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(endpoint);
   } catch { return { changes: 0 }; }
+};
+
+// ===== FCM（App 推送）token =====
+db.saveFcmToken = (driverId, token, platform = 'android') => {
+  try {
+    db.prepare(`INSERT INTO driver_fcm_tokens (driver_id, token, platform, created_at, updated_at)
+      VALUES (?,?,?,?,?)
+      ON CONFLICT(token) DO UPDATE SET driver_id = excluded.driver_id, platform = excluded.platform, updated_at = excluded.updated_at`).run(
+      driverId, token, platform, Date.now(), Date.now()
+    );
+    return { ok: true };
+  } catch (e) {
+    console.warn('[DB] saveFcmToken:', e.message);
+    return null;
+  }
+};
+db.removeFcmToken = (token) => {
+  try {
+    return db.prepare('DELETE FROM driver_fcm_tokens WHERE token = ?').run(token);
+  } catch { return { changes: 0 }; }
+};
+db.getFcmTokensByDriver = (driverId) => {
+  try {
+    return db.prepare('SELECT token, platform FROM driver_fcm_tokens WHERE driver_id = ?').all(driverId);
+  } catch { return []; }
+};
+db.getAllFcmTokens = () => {
+  try {
+    return db.prepare('SELECT driver_id, token, platform FROM driver_fcm_tokens').all();
+  } catch { return []; }
 };
 
 module.exports = db;
