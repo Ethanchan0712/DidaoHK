@@ -626,8 +626,11 @@ router.post('/driver/accept/:orderId', authDriver, (req, res) => {
   }
 
   const now = Date.now();
-  const driverLat = driver.current_lat || order.pickup_lat + 0.01;
-  const driverLng = driver.current_lng || order.pickup_lng + 0.01;
+  // v2.1.2：接單時如果前端有帶真實 GPS，就即刻更新司機位置＋訂單位置（乘客端距離即刻準確）
+  const { lat, lng } = req.body || {};
+  const hasGps = typeof lat === 'number' && typeof lng === 'number' && isFinite(lat) && isFinite(lng);
+  const driverLat = hasGps ? lat : (driver.current_lat || order.pickup_lat + 0.01);
+  const driverLng = hasGps ? lng : (driver.current_lng || order.pickup_lng + 0.01);
 
   const info = db.prepare(`UPDATE orders SET
     status = 'accepted', driver_id = ?, accepted_at = ?,
@@ -637,6 +640,13 @@ router.post('/driver/accept/:orderId', authDriver, (req, res) => {
   // 並發安全：如果 UPDATE 影響 0 行（單已經俾人搶咗／取消咗），唔好當成接單成功
   if (info.changes === 0) {
     return res.status(400).json({ error: '訂單已經俾人接咗或者取消咗' });
+  }
+
+  // v2.1.2：同時更新司機本人嘅最新位置（下次派單距離都準）
+  if (hasGps) {
+    try {
+      db.prepare('UPDATE drivers SET current_lat = ?, current_lng = ? WHERE id = ?').run(lat, lng, req.userId);
+    } catch { /* ignore */ }
   }
 
   const updated = getOrderById(orderId);
