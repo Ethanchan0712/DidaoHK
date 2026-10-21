@@ -208,6 +208,15 @@ CREATE INDEX IF NOT EXISTS idx_orders_dispatch ON orders(dispatch_phase, status)
       console.warn('[DB] skip referrer_phone:', e.message);
     }
   }
+  // v2.1.3：司機座位數（4/5/6 座，乘客端顯示用）
+  if (!cols.includes('seat_capacity')) {
+    try {
+      db.prepare('ALTER TABLE drivers ADD COLUMN seat_capacity INTEGER DEFAULT 4').run();
+      console.log('[DB] drivers +seat_capacity');
+    } catch (e) {
+      console.warn('[DB] skip seat_capacity:', e.message);
+    }
+  }
   if (!cols.includes('is_vip')) {
     try {
       db.prepare('ALTER TABLE drivers ADD COLUMN is_vip INTEGER DEFAULT 0').run();

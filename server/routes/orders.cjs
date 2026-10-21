@@ -25,11 +25,13 @@ function orderToJson(row) {
       id: row.driver_id,
       name: row.driver_name,
       plate: row.driver_plate,
+      phone: row.driver_phone,
       carModel: row.driver_car_model,
       rating: row.driver_rating,
       currentLat: row.driver_lat,
       currentLng: row.driver_lng,
       isVvip: !!row.driver_is_vvip,
+      seatCapacity: row.driver_seat_capacity ?? 4,
     } : undefined,
     pickup: {
       name: row.pickup_name,
@@ -88,8 +90,10 @@ function getOrderById(id) {
     SELECT o.*,
            p.name as passenger_name, p.rating as passenger_rating,
            d.name as driver_name, d.plate as driver_plate,
-           d.car_model as driver_car_model, d.rating as driver_rating,
-           d.is_vvip as driver_is_vvip
+           d.phone as driver_phone, d.car_model as driver_car_model,
+           d.rating as driver_rating,
+           d.is_vvip as driver_is_vvip,
+           d.seat_capacity as driver_seat_capacity
     FROM orders o
     LEFT JOIN passengers p ON o.passenger_id = p.id
     LEFT JOIN drivers d ON o.driver_id = d.id
@@ -150,7 +154,7 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
     passenger_phone,
     created_by_driver, driver_posted_from,
     scheduled_at, is_scheduled
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 1, ?, ?, ?)`).run(
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?, ?)`).run(
     id, orderStatus, req.userId,
     pickupObj.name || '上車點', pLat, pLng,
     destObj.name || '目的地', dLat, dLng,
@@ -349,7 +353,7 @@ router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authD
   const {
     pickup, destination, carType, carModel, estimatedFare, taxiType,
     isDirect, tip, dispatchPhase, teishokuPrice, passengerPhone, distanceKm, etaMinutes,
-    passengerNotes,
+    passengerNotes, scheduledAt,
   } = req.body || {};
 
   const pickupObj = pickup || {};
@@ -391,6 +395,10 @@ router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authD
   const royalLock = isRoyalDirect ? 1 : 0;
   const royalLockExpireAt = isRoyalDirect ? now + 10 * 1000 : null;
 
+  // v2.1.5：出貨預約單——scheduledAt（毫秒）→ scheduled 狀態；否則即時單
+  const schedTs = scheduledAt ? Math.floor(Number(scheduledAt)) : null;
+  const orderStatus = schedTs ? 'scheduled' : 'searching';
+
   // passenger_id 用通用值（出貨單冇真實乘客）
   db.prepare(`INSERT INTO orders (
     id, status, passenger_id,
@@ -401,9 +409,10 @@ router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authD
     passenger_lat, passenger_lng,
     taxi_type, dispatch_phase, dispatch_phase_started_at, created_at,
     created_by_driver, driver_posted_from, passenger_phone, teishoku, teishoku_price, is_direct,
-    royal_lock, royal_lock_expire_at, owner_driver_phone
-  ) VALUES (?, 'searching', 'driver_post', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    id,
+    royal_lock, royal_lock_expire_at, owner_driver_phone,
+    scheduled_at, is_scheduled
+  ) VALUES (?, ?, 'driver_post', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    id, orderStatus,
     pickupObj.name || '上車點', pLat, pLng,
     destObj.name || '目的地', dLat, dLng,
     carType || '4pax', carModel || null,
@@ -414,10 +423,16 @@ router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authD
     taxiType || 'red', dispatchPhase ?? 3, now, now,
     1, req.userId, passengerPhone || null,
     (isDirectStr === 'teishoku') ? 1 : 0, teishokuPrice || null, isDirectStr,
-    royalLock, royalLockExpireAt, ownerDriverPhone
+    royalLock, royalLockExpireAt, ownerDriverPhone,
+    schedTs, schedTs ? 1 : 0
   );
 
   const order = getOrderById(id);
+
+  // 預約出貨單：唔即時廣播——等排程器喺預約時間前 15 分鐘先開始派單
+  if (schedTs) {
+    return res.json({ order });
+  }
 
   // 出貨單都做推播：推俾所有訂閱咗嘅司機（有人出貨，接貨司機收到通知）
   sendNewOrderPush(db, order, { title: '🚧 新貨單！' }).catch((err) =>
@@ -1110,6 +1125,37 @@ function startOrderScheduler() {
   }, 30 * 1000);
   console.log('[scheduler] 預約叫車排程已啟動（每 30 秒檢查，提前 15 分鐘派單）');
 }
+
+// ========== 預約單列表（司機端「預約面板」用）==========
+// v2.1.5：顯示未來 24 小時內排緊嘅預約單（乘客叫車＋貨主出貨都睇到，唔帶電話，私隱安全）
+router.get('/scheduled/upcoming', authDriver, (req, res) => {
+  const now = Date.now();
+  const end = now + 24 * 60 * 60 * 1000;
+  const rows = db.prepare(`
+    SELECT o.id, o.status, o.scheduled_at, o.pickup_name, o.destination_name,
+           o.estimated_fare, o.car_type, o.taxi_type, o.created_by_driver,
+           o.is_direct, o.teishoku, o.tip_amount, o.passenger_notes,
+           d.name as driver_name, d.plate as driver_plate
+    FROM orders o
+    LEFT JOIN drivers d ON o.driver_id = d.id
+    WHERE o.status = 'scheduled' AND o.scheduled_at BETWEEN ? AND ?
+    ORDER BY o.scheduled_at ASC
+  `).all(now, end);
+  res.json({ orders: rows.map(r => ({
+    id: r.id,
+    scheduledAt: r.scheduled_at,
+    pickup: r.pickup_name,
+    destination: r.destination_name,
+    estimatedFare: r.estimated_fare,
+    carType: r.car_type,
+    taxiType: r.taxi_type,
+    isCargo: !!r.created_by_driver,
+    isDirect: r.is_direct,
+    teishoku: !!r.teishoku,
+    tipAmount: r.tip_amount || 0,
+    notes: r.passenger_notes ? JSON.parse(r.passenger_notes) : undefined,
+  })) });
+});
 
 module.exports = router;
 module.exports.startOrderScheduler = startOrderScheduler;

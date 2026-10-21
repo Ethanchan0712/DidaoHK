@@ -236,6 +236,7 @@ router.post('/driver/login', loginLimiter, (req, res) => {
     vip_expires_at: row.vip_expires_at || null,
     vvip_applied: !!row.vvip_applied,
     vvip_requested_at: row.vvip_requested_at,
+    seatCapacity: row.seat_capacity ?? 4,
   };
   const token = signToken({ id: row.id, role: 'driver' });
 
@@ -299,7 +300,7 @@ router.post('/driver/vvip-apply', authDriver, (req, res) => {
 
 // ========== 司機更新個人資料（姓名／電話） ==========
 router.post('/driver/update-profile', authDriver, (req, res) => {
-  const { name, phone } = req.body;
+  const { name, phone, seatCapacity } = req.body;
   const userId = req.user.id;
   const row = db.prepare('SELECT * FROM drivers WHERE id = ?').get(userId);
   if (!row) return res.status(404).json({ error: '司機唔存在' });
@@ -319,6 +320,11 @@ router.post('/driver/update-profile', authDriver, (req, res) => {
     if (dup) return res.status(400).json({ error: '呢個電話號碼已俾其他司機使用' });
     updates.push('phone = ?');
     params.push(p);
+  }
+  // v2.1.3：司機座位數（4/5/6 座）
+  if (typeof seatCapacity === 'number' && [4, 5, 6].includes(seatCapacity)) {
+    updates.push('seat_capacity = ?');
+    params.push(seatCapacity);
   }
   if (updates.length === 0) return res.status(400).json({ error: '冇資料要更新' });
 
@@ -340,6 +346,7 @@ router.post('/driver/update-profile', authDriver, (req, res) => {
       is_vip: !!updated.is_vip,
       vip_expires_at: updated.vip_expires_at,
       online: !!updated.online,
+      seatCapacity: updated.seat_capacity ?? 4,
     },
   });
 });
