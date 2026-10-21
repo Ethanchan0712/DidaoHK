@@ -191,15 +191,26 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
 
 // ========== 乘客取消叫車 ==========
 router.post('/passenger/cancel', authPassenger, (req, res) => {
-  const order = db.prepare('SELECT * FROM orders WHERE passenger_id = ? AND status = ? ORDER BY created_at DESC LIMIT 1').get(req.userId, 'searching');
+  // v2.1.0 fix：支援取消預約單（scheduled）＋可指定 orderId；唔可以再「取消咗第二張單」
+  const { orderId } = req.body || {};
+  let order;
+  if (orderId) {
+    order = db.prepare('SELECT * FROM orders WHERE id = ? AND passenger_id = ?').get(orderId, req.userId);
+  } else {
+    order = db.prepare("SELECT * FROM orders WHERE passenger_id = ? AND status IN ('searching','scheduled') ORDER BY created_at DESC LIMIT 1").get(req.userId);
+  }
   if (!order) return res.status(400).json({ error: '冇可取消嘅訂單' });
+  // 已接單／行車中唔可以乘客單方面取消（要搵客服／司機）
+  if (!['searching', 'scheduled'].includes(order.status)) {
+    return res.status(400).json({ error: '呢張單已接單，唔可以直接取消' });
+  }
 
   db.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ?").run(order.id);
 
   sseHub.publishToOrder(order.id, 'order-cancelled', { orderId: order.id });
   sseHub.publishToDriverHall('order-cancelled', { orderId: order.id });
 
-  res.json({ ok: true });
+  res.json({ ok: true, orderId: order.id });
 });
 
 // ========== 乘客當前訂單 ==========
