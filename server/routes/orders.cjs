@@ -248,7 +248,11 @@ router.get('/passenger/current', authPassenger, (req, res) => {
     LEFT JOIN passengers p ON o.passenger_id = p.id
     LEFT JOIN drivers d ON o.driver_id = d.id
     WHERE o.passenger_id = ? AND o.status IN ('searching','accepted','picked_up','scheduled')
-    ORDER BY o.created_at DESC
+    -- v2.1.13：已接單（accepted/picked_up）最優先——乘客同時有多張預約單時，
+    -- 畫面穩定顯示「已接單」嗰張（有司機資料），唔會因為 current 揀咗另一張 scheduled 單而跳頁
+    ORDER BY CASE WHEN o.status IN ('accepted','picked_up') THEN 0
+                  WHEN o.status = 'searching' THEN 1
+                  ELSE 2 END, o.created_at DESC
     LIMIT 1
   `).get(req.userId);
   res.json({ order: orderToJson(row) || null });
