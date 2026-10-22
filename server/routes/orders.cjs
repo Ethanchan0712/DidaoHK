@@ -131,6 +131,16 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
     return res.status(400).json({ error: '你有進行中嘅訂單，請先完成' });
   }
 
+  // v2.1.12：預約單上限——每人最多 5 張未派嘅預約單（防止刷單／霸位）
+  if (scheduledAt) {
+    const schedCount = db.prepare(
+      "SELECT COUNT(*) as c FROM orders WHERE passenger_id = ? AND status = 'scheduled'"
+    ).get(req.userId);
+    if (schedCount && schedCount.c >= 5) {
+      return res.status(400).json({ error: '你已經有 5 張預約單（上限），請完成或取消先再出新預約單' });
+    }
+  }
+
   const id = genOrderId();
   const now = Date.now();
   // 預約叫車：scheduledAt（毫秒）→ 預約單狀態；否則即時單
@@ -173,24 +183,30 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
 
   const order = getOrderById(id);
 
-  // v2.1.8：預約搶單——預約單一出即派（照皇牌優先），唔再等「前 15 分鐘」先派；
-  // 司機可以提早搶定（hold），3 分鐘冇人接會自動取消（見 3 分鐘清理）
+  // v2.1.8：預約搶單——預約單一出即派（照皇牌優先），司機可以提早搶定（hold）
+  // v2.1.12：預約單照廣播＋播報＋推播（之前漏咗——淨係即時單有 VVIP/hall/push，
+  //          令乘客出嘅預約單司機冇即時通知、冇語音播報）
   if (!schedTs) {
-    // VVIP 分級派單：首先推送到所有在線 VVIP 司機
-    // 普通司機要等 dispatch phase 升級先睇到（由前端顯示倒數 + 定時輪詢升級）
+    // 即時單：VVIP 分級派單（普通司機要等 dispatch phase 升級先睇到）
     const vvipDrivers = db.prepare(
       "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved'"
     ).all();
     vvipDrivers.forEach(d => {
       sseHub.publishToDriver(d.id, 'new-vvip-order', { order });
     });
-
-    // 同時推送到大廳（但大廳接口會過濾，普通司機睇唔到 phase 0 嘅單）
-    sseHub.publishToDriverHall('new-order', { order });
-
-    // Web Push：乘客一出單，推送俾所有允許咗通知嘅司機（即使 app 喺後台／鎖屏都彈）
-    sendNewOrderPush(db, order).catch((err) => console.warn('[push] sendNewOrderPush error:', err.message));
+  } else {
+    // 預約單：一出即派（照皇牌優先）——VVIP 司機都即時收到
+    const vvipDrivers = db.prepare(
+      "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved'"
+    ).all();
+    vvipDrivers.forEach(d => {
+      sseHub.publishToDriver(d.id, 'new-vvip-order', { order });
+    });
   }
+
+  // 預約單同即時單都廣播俾大廳＋推播（Web Push/FCM）——司機有聲有通知
+  sseHub.publishToDriverHall('new-order', { order });
+  sendNewOrderPush(db, order).catch((err) => console.warn('[push] sendNewOrderPush error:', err.message));
 
   res.json({ order });
 });
@@ -225,7 +241,7 @@ router.get('/passenger/current', authPassenger, (req, res) => {
     SELECT o.*,
            p.name as passenger_name, p.rating as passenger_rating,
            d.name as driver_name, d.plate as driver_plate,
-           d.car_model as driver_car_model, d.rating as driver_rating,
+           d.phone as driver_phone, d.car_model as driver_car_model, d.rating as driver_rating,
            d.is_vvip as driver_is_vvip,
            d.current_lat as driver_lat, d.current_lng as driver_lng
     FROM orders o
@@ -379,6 +395,15 @@ router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authD
     return res.status(429).json({ error: '你啱啱先出過相同路線單，3分鐘內唔可以重複出，請確認上一張單係咪已經出咗' });
   }
   const schedTs = scheduledAt ? Math.floor(Number(scheduledAt)) : null;
+  // v2.1.12：預約出貨單上限——每人最多 5 張未派嘅預約單
+  if (schedTs) {
+    const schedCount = db.prepare(
+      "SELECT COUNT(*) as c FROM orders WHERE driver_posted_from = ? AND status = 'scheduled'"
+    ).get(req.userId);
+    if (schedCount && schedCount.c >= 5) {
+      return res.status(400).json({ error: '你已經有 5 張預約出貨單（上限），請刪除或等派完先再出新單' });
+    }
+  }
   if (!schedTs) {
     lastDriverPost.set(req.userId, { time: Date.now(), key: dupKey });
   }
@@ -638,9 +663,10 @@ router.post('/driver/accept/:orderId', authDriver, (req, res) => {
     return res.status(400).json({ error: '請先上線先可以接單' });
   }
 
-  // 檢查司機有冇進行中訂單（已完成／已付款嘅單唔算，唔會阻住司機接新單）
+  // v2.1.12：已接預約單唔再擋新單——司機 hold 緊預約單都可以接普通即時單
+  // （預約單唔會「佔位置」令司機接唔到單；只有進行中嘅即時單先擋）
   const active = db.prepare(`SELECT id FROM orders
-    WHERE driver_id = ? AND status IN ('accepted','picked_up')`).get(req.userId);
+    WHERE driver_id = ? AND status IN ('accepted','picked_up') AND is_scheduled = 0`).get(req.userId);
   if (active) {
     return res.status(400).json({ error: '你有進行中嘅訂單' });
   }
@@ -1218,17 +1244,20 @@ router.get('/scheduled/upcoming', authDriver, (req, res) => {
     LIMIT 20
   `).all();
   // 自己接咗嘅預約單（hold 緊）——預約面板顯示「我嘅預約」＋放單鍵
+  // v2.1.12：已接單帶埋乘客電話（接咗先睇到；未接嘅單唔顯示電話，私隱安全）
   const myAccepted = db.prepare(`
     SELECT o.id, o.status, o.scheduled_at, o.created_at, o.pickup_name, o.destination_name,
            o.estimated_fare, o.car_type, o.taxi_type, o.created_by_driver,
            o.is_direct, o.teishoku, o.tip_amount, o.passenger_notes,
-           d.name as driver_name, d.plate as driver_plate
+           d.name as driver_name, d.plate as driver_plate,
+           o.passenger_phone as cargo_phone, p.phone as passenger_phone
     FROM orders o
     LEFT JOIN drivers d ON o.driver_id = d.id
+    LEFT JOIN passengers p ON o.passenger_id = p.id
     WHERE o.status = 'accepted' AND o.is_scheduled = 1 AND o.driver_id = ?
     ORDER BY o.scheduled_at ASC
   `).all(req.userId);
-  const map = (r) => ({
+  const map = (r, withPhone) => ({
     id: r.id,
     status: r.status,
     scheduledAt: r.scheduled_at,
@@ -1245,8 +1274,10 @@ router.get('/scheduled/upcoming', authDriver, (req, res) => {
     notes: r.passenger_notes ? JSON.parse(r.passenger_notes) : undefined,
     driverName: r.driver_name,
     driverPlate: r.driver_plate,
+    // 只有「已接」嘅單先帶電話（出貨單用出貨司機電話；乘客單用乘客電話）
+    phone: withPhone ? (r.cargo_phone || r.passenger_phone || undefined) : undefined,
   });
-  res.json({ orders: rows.map(map), myAccepted: myAccepted.map(map) });
+  res.json({ orders: rows.map((r) => map(r, false)), myAccepted: myAccepted.map((r) => map(r, true)) });
 });
 
 module.exports = router;
