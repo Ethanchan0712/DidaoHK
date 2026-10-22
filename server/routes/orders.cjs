@@ -121,9 +121,11 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
     return res.status(400).json({ error: '參數唔完整' });
   }
 
-  // 檢查乘客有冇進行中訂單（已完成嘅單唔算，可以再出單；預約單未到都算進行中）
+  // 檢查乘客有冇進行中訂單（已完成嘅單唔算，可以再出單）
+  // v2.1.7：預約單（scheduled）唔再鎖死「進行中」——預約單未到派單時間，
+  // 可以同時出多張（例如今晚一張、聽朝一張）；真正進行中（searching/accepted/picked_up）先鎖
   const active = db.prepare(`SELECT id FROM orders
-    WHERE passenger_id = ? AND status IN ('searching','accepted','picked_up','scheduled')`).get(req.userId);
+    WHERE passenger_id = ? AND status IN ('searching','accepted','picked_up')`).get(req.userId);
   if (active) {
     return res.status(400).json({ error: '你有進行中嘅訂單，請先完成' });
   }
@@ -302,7 +304,7 @@ function haversineKm(lat1, lng1, lat2, lng2) {
 // Phase 1 = 3 公里內司機（10-30 秒）
 // Phase 2 = 5 公里內司機（30-60 秒）
 // Phase 3 = 全港開放（60 秒後；範圍 999 = 無限制，跨區都接到）
-const DISPATCH_PHASE_DURATIONS = [10000, 20000, 30000, 540000]; // 每階段持續時間
+const DISPATCH_PHASE_DURATIONS = [8000, 15000, 25000, 540000]; // v2.1.7：普通司機更快見到單（皇牌仍然 8 秒內獨享） // 每階段持續時間
 const DISPATCH_PHASE_RANGES = [0, 3, 5, 999]; // 每階段可見距離（km），0 = 無限（VVIP 唔計距離），999 = 全港開放
 
 // 司機拒單記錄表：拒咗嘅單唔會再派俾同一司機
@@ -368,12 +370,16 @@ router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authD
   }
 
   // 防重複出單（重複提交／語音連觸發）：同一司機 180 秒內相同路線擋第二張
+  // v2.1.7：預約出貨單（scheduledAt）唔計入防重——預約單唔同時派，可以出多張；即時單照舊防重
   const dupKey = `${pickupObj.name || ''}|${destObj.name || ''}|${carType || ''}|${taxiType || ''}`;
   const prevPost = lastDriverPost.get(req.userId);
   if (prevPost && Date.now() - prevPost.time < 180000 && prevPost.key === dupKey) {
     return res.status(429).json({ error: '你啱啱先出過相同路線單，3分鐘內唔可以重複出，請確認上一張單係咪已經出咗' });
   }
-  lastDriverPost.set(req.userId, { time: Date.now(), key: dupKey });
+  const schedTs = scheduledAt ? Math.floor(Number(scheduledAt)) : null;
+  if (!schedTs) {
+    lastDriverPost.set(req.userId, { time: Date.now(), key: dupKey });
+  }
 
   const id = genOrderId();
   const now = Date.now();
@@ -395,8 +401,7 @@ router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authD
   const royalLock = isRoyalDirect ? 1 : 0;
   const royalLockExpireAt = isRoyalDirect ? now + 10 * 1000 : null;
 
-  // v2.1.5：出貨預約單——scheduledAt（毫秒）→ scheduled 狀態；否則即時單
-  const schedTs = scheduledAt ? Math.floor(Number(scheduledAt)) : null;
+  // v2.1.5：出貨預約單——scheduledAt（毫秒）→ scheduled 狀態；否則即時單（schedTs 已喺防重度計咗）
   const orderStatus = schedTs ? 'scheduled' : 'searching';
 
   // passenger_id 用通用值（出貨單冇真實乘客）
