@@ -172,25 +172,24 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
 
   const order = getOrderById(id);
 
-  // 預約單：唔即時派單——等排程器喺預約時間前 15 分鐘先轉做派單（見 startOrderScheduler）
-  if (schedTs) {
-    return res.json({ order });
+  // v2.1.8：預約搶單——預約單一出即派（照皇牌優先），唔再等「前 15 分鐘」先派；
+  // 司機可以提早搶定（hold），3 分鐘冇人接會自動取消（見 3 分鐘清理）
+  if (!schedTs) {
+    // VVIP 分級派單：首先推送到所有在線 VVIP 司機
+    // 普通司機要等 dispatch phase 升級先睇到（由前端顯示倒數 + 定時輪詢升級）
+    const vvipDrivers = db.prepare(
+      "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved'"
+    ).all();
+    vvipDrivers.forEach(d => {
+      sseHub.publishToDriver(d.id, 'new-vvip-order', { order });
+    });
+
+    // 同時推送到大廳（但大廳接口會過濾，普通司機睇唔到 phase 0 嘅單）
+    sseHub.publishToDriverHall('new-order', { order });
+
+    // Web Push：乘客一出單，推送俾所有允許咗通知嘅司機（即使 app 喺後台／鎖屏都彈）
+    sendNewOrderPush(db, order).catch((err) => console.warn('[push] sendNewOrderPush error:', err.message));
   }
-
-  // VVIP 分級派單：首先推送到所有在線 VVIP 司機
-  // 普通司機要等 dispatch phase 升級先睇到（由前端顯示倒數 + 定時輪詢升級）
-  const vvipDrivers = db.prepare(
-    "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved'"
-  ).all();
-  vvipDrivers.forEach(d => {
-    sseHub.publishToDriver(d.id, 'new-vvip-order', { order });
-  });
-
-  // 同時推送到大廳（但大廳接口會過濾，普通司機睇唔到 phase 0 嘅單）
-  sseHub.publishToDriverHall('new-order', { order });
-
-  // Web Push：乘客一出單，推送俾所有允許咗通知嘅司機（即使 app 喺後台／鎖屏都彈）
-  sendNewOrderPush(db, order).catch((err) => console.warn('[push] sendNewOrderPush error:', err.message));
 
   res.json({ order });
 });
@@ -243,6 +242,7 @@ router.get('/passenger/history', authPassenger, (req, res) => {
     SELECT o.*,
            p.name as passenger_name, p.rating as passenger_rating,
            d.name as driver_name, d.plate as driver_plate,
+           d.phone as driver_phone,
            d.car_model as driver_car_model, d.rating as driver_rating,
            d.is_vvip as driver_is_vvip
     FROM orders o
@@ -425,7 +425,7 @@ router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authD
     (isDirectStr === 'discount85') ? 1 : 0, tip || 0, estimatedFare,
     distanceKm || null, etaMinutes || null,
     pLat, pLng,
-    taxiType || 'red', dispatchPhase ?? 3, now, now,
+    taxiType || 'red', schedTs ? 0 : (dispatchPhase ?? 3), now, now,
     1, req.userId, passengerPhone || null,
     (isDirectStr === 'teishoku') ? 1 : 0, teishokuPrice || null, isDirectStr,
     royalLock, royalLockExpireAt, ownerDriverPhone,
@@ -434,15 +434,21 @@ router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authD
 
   const order = getOrderById(id);
 
-  // 預約出貨單：唔即時廣播——等排程器喺預約時間前 15 分鐘先開始派單
-  if (schedTs) {
-    return res.json({ order });
-  }
-
+  // v2.1.8：預約出貨單一出即派（照皇牌優先）——唔再等「前 15 分鐘」；3 分鐘冇人接自動取消
   // 出貨單都做推播：推俾所有訂閱咗嘅司機（有人出貨，接貨司機收到通知）
   sendNewOrderPush(db, order, { title: '🚧 新貨單！' }).catch((err) =>
     console.warn('[push] 出貨 push error:', err.message)
   );
+
+  // v2.1.8：預約出貨單照皇牌優先——首先推送 VVIP 司機
+  if (schedTs) {
+    const vvipDrivers = db.prepare(
+      "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved'"
+    ).all();
+    vvipDrivers.forEach(d => {
+      sseHub.publishToDriver(d.id, 'new-vvip-order', { order });
+    });
+  }
 
   // v2.0.88：出貨單都 SSE 即刻廣播俾所有在線司機——
   // 之前得乘客叫車單先有即時廣播，司機出貨單要靠 polling 先見到，其他司機冇「新貨單」即時語音播報
@@ -509,7 +515,7 @@ router.get('/driver/hall', authDriver, (req, res) => {
     FROM orders o
     LEFT JOIN passengers p ON o.passenger_id = p.id
     LEFT JOIN drivers d ON o.driver_id = d.id
-    WHERE o.status = 'searching' AND o.created_at > ?
+    WHERE o.status IN ('searching','scheduled') AND o.created_at > ?
     ORDER BY
       CASE WHEN o.is_direct = 'direct' OR o.royal_lock = 1 THEN 0 ELSE 1 END ASC,
       o.created_at DESC
@@ -525,9 +531,13 @@ router.get('/driver/hall', authDriver, (req, res) => {
   const filtered = rows.filter(row => {
     const phase = row.dispatch_phase || 0;
 
-    // 司機出貨單：公共單，所有 approved+online 司機都見到（跨區都接到）
+    // 司機出貨單（即時）：公共單，所有 approved+online 司機都見到（跨區都接到）
     // 但出貨者自己唔會見到自己出嘅單（避免誤接自己張單）
-    if (row.created_by_driver) return row.driver_posted_from !== req.userId;
+    // v2.1.8：預約出貨單（is_scheduled=1）照行皇牌優先（落返下面 phase/距離過濾）
+    if (row.created_by_driver) {
+      if (!row.is_scheduled) return row.driver_posted_from !== req.userId;
+      if (row.driver_posted_from === req.userId) return false;
+    }
 
     // 拒單記錄：呢位司機拒過嘅單唔會再派俾佢
     if (myRejections.has(row.id)) return false;
@@ -624,7 +634,8 @@ router.post('/driver/accept/:orderId', authDriver, (req, res) => {
     return res.status(400).json({ error: '你有進行中嘅訂單' });
   }
 
-  const order = db.prepare('SELECT * FROM orders WHERE id = ? AND status = ?').get(orderId, 'searching');
+  // v2.1.8：預約搶單——預約單（scheduled）都可以接（司機提早 hold；到約定時間先去接）
+  const order = db.prepare("SELECT * FROM orders WHERE id = ? AND status IN ('searching','scheduled')").get(orderId);
   if (!order) {
     return res.status(400).json({ error: '訂單已經俾人接咗或者取消咗' });
   }
@@ -655,7 +666,7 @@ router.post('/driver/accept/:orderId', authDriver, (req, res) => {
   const info = db.prepare(`UPDATE orders SET
     status = 'accepted', driver_id = ?, accepted_at = ?,
     driver_lat = ?, driver_lng = ?
-    WHERE id = ? AND status = 'searching'`).run(req.userId, now, driverLat, driverLng, orderId);
+    WHERE id = ? AND status IN ('searching','scheduled')`).run(req.userId, now, driverLat, driverLng, orderId);
 
   // 並發安全：如果 UPDATE 影響 0 行（單已經俾人搶咗／取消咗），唔好當成接單成功
   if (info.changes === 0) {
@@ -694,6 +705,38 @@ router.post('/driver/cancel-current', authDriver, (req, res) => {
 
   sseHub.publishToOrder(order.id, 'order-cancelled', { order: updated });
   sseHub.publishToDriverHall('order-cancelled', { orderId: order.id });
+
+  res.json({ ok: true, order: updated });
+});
+
+// ========== v2.1.8：司機放單（預約單專用）——接咗嘅預約單可以放返出嚟，重新派（重出[預約]） ==========
+router.post('/driver/release/:orderId', authDriver, (req, res) => {
+  const order = db.prepare("SELECT * FROM orders WHERE id = ? AND driver_id = ? AND status = 'accepted'")
+    .get(req.params.orderId, req.userId);
+  if (!order) {
+    return res.status(404).json({ error: '搵唔到呢張已接嘅單' });
+  }
+  // 淨係預約單可以放單重派；即時單要用「取消當前單」
+  if (!order.is_scheduled) {
+    return res.status(400).json({ error: '即時單唔可以放單，請用取消' });
+  }
+  const now = Date.now();
+  db.prepare(`UPDATE orders SET
+    status = 'scheduled', driver_id = NULL, accepted_at = NULL,
+    driver_lat = NULL, driver_lng = NULL,
+    dispatch_phase = 0, dispatch_phase_started_at = ?, created_at = ?,
+    royal_lock = 0, royal_lock_expire_at = NULL
+    WHERE id = ?`).run(now, now, order.id);
+  const updated = getOrderById(order.id);
+
+  // 放單後重新派（照皇牌優先）
+  try {
+    const vvipDrivers = db.prepare(
+      "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved'"
+    ).all();
+    vvipDrivers.forEach(d => sseHub.publishToDriver(d.id, 'new-vvip-order', { order: updated }));
+    sseHub.publishToDriverHall('new-order', { order: updated });
+  } catch { /* ignore */ }
 
   res.json({ ok: true, order: updated });
 });
@@ -1100,6 +1143,40 @@ function cleanupStaleOrders() {
 setInterval(cleanupStaleOrders, 60 * 1000); // 每分鐘檢查一次
 console.log('[cleanup] 幽靈單自動清理已啟動（90 分鐘無心跳自動收尾）');
 
+// ========== v2.1.8：3 分鐘冇人接自動取消 ==========
+// 即時單（searching）出咗 3 分鐘冇司機接 → 自動取消＋通知乘客；
+// 預約單（scheduled）一出即派（預約搶單），3 分鐘冇人搶 → 都自動取消
+// （司機放單重出後 created_at 會 reset，重新計 3 分鐘）
+function cleanupUnacceptedOrders() {
+  const t3 = Date.now() - 3 * 60 * 1000;
+  let rows = [];
+  try {
+    rows = db.prepare(
+      "SELECT id, status FROM orders WHERE status IN ('searching','scheduled') AND created_at < ?"
+    ).all(t3);
+  } catch { return; }
+  if (!rows.length) return;
+  const cancel = db.prepare(
+    "UPDATE orders SET status = 'cancelled', finished_at = ? WHERE id = ? AND status IN ('searching','scheduled')"
+  );
+  for (const r of rows) {
+    try {
+      const info = cancel.run(Date.now(), r.id);
+      if (info.changes === 0) continue;
+      const updated = getOrderById(r.id);
+      if (updated) {
+        try { sseHub.publishToOrder(r.id, 'order-cancelled', { order: updated, reason: 'timeout_3min' }); } catch {}
+        try { sseHub.publishToDriverHall('order-cancelled', { orderId: r.id, reason: 'timeout_3min' }); } catch {}
+      }
+      console.log('[cleanup] 3分鐘冇人接自動取消:', r.id, 'status=', r.status);
+    } catch (e) {
+      console.warn('[cleanup] 3分鐘取消失敗', r.id, e.message);
+    }
+  }
+}
+setInterval(cleanupUnacceptedOrders, 30 * 1000);
+console.log('[cleanup] 3分鐘冇人接自動取消已啟動（每 30 秒檢查）');
+
 // ========== 預約叫車排程器 ==========
 // 預約單（status='scheduled'）喺預約時間前 15 分鐘自動轉做即時派單（'searching'），
 // 並推送到 VVIP 司機＋司機大廳＋Web Push——同即時單一樣嘅派單流程。
@@ -1133,11 +1210,12 @@ function startOrderScheduler() {
 
 // ========== 預約單列表（司機端「預約面板」用）==========
 // v2.1.5：顯示未來 24 小時內排緊嘅預約單（乘客叫車＋貨主出貨都睇到，唔帶電話，私隱安全）
+// v2.1.8：預約搶單——scheduled 單即時派（3 分鐘冇人搶自動取消）；加返「我接咗嘅預約」（可以放單重派）
 router.get('/scheduled/upcoming', authDriver, (req, res) => {
   const now = Date.now();
   const end = now + 24 * 60 * 60 * 1000;
   const rows = db.prepare(`
-    SELECT o.id, o.status, o.scheduled_at, o.pickup_name, o.destination_name,
+    SELECT o.id, o.status, o.scheduled_at, o.created_at, o.pickup_name, o.destination_name,
            o.estimated_fare, o.car_type, o.taxi_type, o.created_by_driver,
            o.is_direct, o.teishoku, o.tip_amount, o.passenger_notes,
            d.name as driver_name, d.plate as driver_plate
@@ -1146,9 +1224,22 @@ router.get('/scheduled/upcoming', authDriver, (req, res) => {
     WHERE o.status = 'scheduled' AND o.scheduled_at BETWEEN ? AND ?
     ORDER BY o.scheduled_at ASC
   `).all(now, end);
-  res.json({ orders: rows.map(r => ({
+  // 自己接咗嘅預約單（hold 緊）——預約面板顯示「我嘅預約」＋放單鍵
+  const myAccepted = db.prepare(`
+    SELECT o.id, o.status, o.scheduled_at, o.created_at, o.pickup_name, o.destination_name,
+           o.estimated_fare, o.car_type, o.taxi_type, o.created_by_driver,
+           o.is_direct, o.teishoku, o.tip_amount, o.passenger_notes,
+           d.name as driver_name, d.plate as driver_plate
+    FROM orders o
+    LEFT JOIN drivers d ON o.driver_id = d.id
+    WHERE o.status = 'accepted' AND o.is_scheduled = 1 AND o.driver_id = ?
+    ORDER BY o.scheduled_at ASC
+  `).all(req.userId);
+  const map = (r) => ({
     id: r.id,
+    status: r.status,
     scheduledAt: r.scheduled_at,
+    createdAt: r.created_at,
     pickup: r.pickup_name,
     destination: r.destination_name,
     estimatedFare: r.estimated_fare,
@@ -1159,7 +1250,10 @@ router.get('/scheduled/upcoming', authDriver, (req, res) => {
     teishoku: !!r.teishoku,
     tipAmount: r.tip_amount || 0,
     notes: r.passenger_notes ? JSON.parse(r.passenger_notes) : undefined,
-  })) });
+    driverName: r.driver_name,
+    driverPlate: r.driver_plate,
+  });
+  res.json({ orders: rows.map(map), myAccepted: myAccepted.map(map) });
 });
 
 module.exports = router;
