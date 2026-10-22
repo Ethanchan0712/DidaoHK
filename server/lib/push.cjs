@@ -44,13 +44,15 @@ async function sendFcmToDrivers(db, order, opts = {}) {
   if (!app) return { fcm: 'disabled' };
   const tokens = db.getAllFcmTokens();
   if (!tokens || tokens.length === 0) return { fcm: 0 };
+  // v2.1.9：token 去重——同一部機／同一 token 重複註冊時只推一次，避免重複通知
+  const uniqueTokens = [...new Map(tokens.map((t) => [t.token, t])).values()];
   const title = opts.title || '🚕 新單！';
   const pickup = order.pickup?.name || order.pickupName || '上車地點';
   const dest = order.destination?.name || order.destinationName || '目的地';
   const fare = order.estimatedFare || order.estimated_fare || 0;
   const fareText = fare > 0 ? `約 HK$${fare}` : '跳錶';
   const message = {
-    tokens: tokens.map((t) => t.token),
+    tokens: uniqueTokens.map((t) => t.token),
     notification: { title, body: `${pickup} → ${dest} ｜ ${fareText}` },
     data: {
       orderId: order.id, pickup, dest, fare: String(fare), url: '/driver/hall',
@@ -61,7 +63,7 @@ async function sendFcmToDrivers(db, order, opts = {}) {
     const r = await app.messaging().sendEachForMulticast(message);
     // 失效 token 自動清走
     r.responses.forEach((resp, i) => {
-      if (!resp.success && tokens[i]) db.removeFcmToken(tokens[i].token);
+      if (!resp.success && uniqueTokens[i]) db.removeFcmToken(uniqueTokens[i].token);
     });
     return { fcm: r.successCount };
   } catch (e) {
@@ -85,6 +87,8 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 async function sendNewOrderPush(db, order, opts = {}) {
   const subs = db.getAllPushSubscriptions();
   if (!subs || subs.length === 0) return { sent: 0 };
+  // v2.1.9：endpoint 去重——同一部機重複註冊（重裝/多開）時只推一次，避免重複通知
+  const uniqueSubs = [...new Map(subs.filter((s) => s.endpoint).map((s) => [s.endpoint, s])).values()];
 
   const title = opts.title || '🚕 新單！';
   const pickup = order.pickup?.name || order.pickupName || '上車地點';
@@ -96,7 +100,7 @@ async function sendNewOrderPush(db, order, opts = {}) {
   const pLng = order.passengerLng ?? order.pickup?.lng;
 
   const results = { sent: 0, failed: 0, errors: [] };
-  for (const sub of subs) {
+  for (const sub of uniqueSubs) {
     if (!sub.endpoint) continue;
     try {
       // 逐個司機計「距你幾多公里 + 預計幾多分鐘」（市區平均約 25km/h → 每公里約 2.4 分鐘）

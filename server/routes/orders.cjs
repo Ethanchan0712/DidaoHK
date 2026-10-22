@@ -460,18 +460,27 @@ router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authD
 
 // ========== 司機取消自己出貨單 ==========
 router.post('/driver/cancel-post/:orderId', authDriver, (req, res) => {
-  const row = db.prepare("SELECT id, pickup_name, destination_name, car_type, taxi_type FROM orders WHERE id = ? AND created_by_driver = 1 AND driver_posted_from = ? AND status = 'searching'")
+  // v2.1.9：預約出貨單（scheduled）都可以刪除（取消）
+  const row = db.prepare("SELECT id, pickup_name, destination_name, car_type, taxi_type, status FROM orders WHERE id = ? AND created_by_driver = 1 AND driver_posted_from = ? AND status IN ('searching','scheduled')")
     .get(req.params.orderId, req.userId);
   if (!row) {
-    return res.status(404).json({ error: '搵唔到呢張出貨單，或者唔係你出嘅' });
+    return res.status(404).json({ error: '搵唔到呢張出貨單，或者唔係你出嘅（已接單嘅單唔可以刪除）' });
   }
-  db.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ?").run(req.params.orderId);
+  db.prepare("UPDATE orders SET status = 'cancelled', finished_at = ? WHERE id = ?").run(Date.now(), req.params.orderId);
   // 取消成功 → 解除呢條路線嘅 3 分鐘防重鎖，司機可以即刻再出相同路線單（唔會被 429 誤擋）
   try {
     const dupKey = `${row.pickup_name || ''}|${row.destination_name || ''}|${row.car_type || ''}|${row.taxi_type || ''}`;
     const prev = lastDriverPost.get(req.userId);
     if (prev && prev.key === dupKey) {
       lastDriverPost.delete(req.userId);
+    }
+  } catch { /* ignore */ }
+  // SSE 通知：取消咗張單（接貨司機大廳即時移除；乘客/貨主端收「已取消」）
+  try {
+    const updated = getOrderById(req.params.orderId);
+    if (updated) {
+      sseHub.publishToOrder(req.params.orderId, 'order-cancelled', { order: updated, reason: 'driver_cancelled' });
+      sseHub.publishToDriverHall('order-cancelled', { orderId: req.params.orderId, reason: 'driver_cancelled' });
     }
   } catch { /* ignore */ }
   res.json({ ok: true });
@@ -1179,36 +1188,16 @@ function cleanupUnacceptedOrders() {
 setInterval(cleanupUnacceptedOrders, 30 * 1000);
 console.log('[cleanup] 3分鐘冇人接自動取消已啟動（每 30 秒檢查）');
 
-// ========== 預約叫車排程器 ==========
-// 預約單（status='scheduled'）喺預約時間前 15 分鐘自動轉做即時派單（'searching'），
-// 並推送到 VVIP 司機＋司機大廳＋Web Push——同即時單一樣嘅派單流程。
+// ========== 預約叫車排程器（v2.1.9 已停用） ==========
+// v2.1.8 起：預約單一出即派（scheduled 狀態可直接搶單），預約面板照皇牌優先派。
+// 舊 scheduler「預約時間前 15 分鐘轉 searching＋再推送」會造成：
+//  ① 重複派單（一張預約單推兩次）
+//  ② 重複推送（司機收到 2-3 個「新貨單！」通知）
+// 因此完全停用，預約單保持 scheduled 狀態直到被搶/被取消。
 function startOrderScheduler() {
-  setInterval(() => {
-    try {
-      const now = Date.now();
-      const due = db.prepare(
-        "SELECT id FROM orders WHERE status = 'scheduled' AND scheduled_at <= ?"
-      ).all(now + 15 * 60 * 1000);
-      if (!due.length) return;
-      for (const r of due) {
-        db.prepare("UPDATE orders SET status = 'searching', dispatch_phase_started_at = ?, dispatch_phase = 0 WHERE id = ?")
-          .run(now, r.id);
-        const order = getOrderById(r.id);
-        if (!order) continue;
-        const vvipDrivers = db.prepare(
-          "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved'"
-        ).all();
-        vvipDrivers.forEach(d => sseHub.publishToDriver(d.id, 'new-vvip-order', { order }));
-        sseHub.publishToDriverHall('new-order', { order });
-        sendNewOrderPush(db, order).catch(err => console.warn('[scheduler-push]', err.message));
-        console.log('[scheduler] 預約單開始派單:', r.id, 'scheduled_at=', order.scheduledAt);
-      }
-    } catch (e) {
-      console.error('[scheduler]', e.message);
-    }
-  }, 30 * 1000);
-  console.log('[scheduler] 預約叫車排程已啟動（每 30 秒檢查，提前 15 分鐘派單）');
+  // v2.1.9：已停用（見上方註釋）
 }
+console.log('[scheduler] 預約排程已停用（v2.1.8+ 預約一出即派，scheduled 可直接搶）');
 
 // ========== 預約單列表（司機端「預約面板」用）==========
 // v2.1.5：顯示排緊嘅預約單（乘客叫車＋貨主出貨都睇到，唔帶電話，私隱安全）
