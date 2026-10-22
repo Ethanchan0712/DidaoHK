@@ -1151,13 +1151,15 @@ function cleanupUnacceptedOrders() {
   const t3 = Date.now() - 3 * 60 * 1000;
   let rows = [];
   try {
+    // v2.1.8：淨係即時單（searching）3 分鐘冇人接先自動取消；
+    // 預約單（scheduled）冇時間限制，唔會自動清空
     rows = db.prepare(
-      "SELECT id, status FROM orders WHERE status IN ('searching','scheduled') AND created_at < ?"
+      "SELECT id, status FROM orders WHERE status = 'searching' AND created_at < ?"
     ).all(t3);
   } catch { return; }
   if (!rows.length) return;
   const cancel = db.prepare(
-    "UPDATE orders SET status = 'cancelled', finished_at = ? WHERE id = ? AND status IN ('searching','scheduled')"
+    "UPDATE orders SET status = 'cancelled', finished_at = ? WHERE id = ? AND status = 'searching'"
   );
   for (const r of rows) {
     try {
@@ -1209,11 +1211,10 @@ function startOrderScheduler() {
 }
 
 // ========== 預約單列表（司機端「預約面板」用）==========
-// v2.1.5：顯示未來 24 小時內排緊嘅預約單（乘客叫車＋貨主出貨都睇到，唔帶電話，私隱安全）
-// v2.1.8：預約搶單——scheduled 單即時派（3 分鐘冇人搶自動取消）；加返「我接咗嘅預約」（可以放單重派）
+// v2.1.5：顯示排緊嘅預約單（乘客叫車＋貨主出貨都睇到，唔帶電話，私隱安全）
+// v2.1.8：預約搶單——一出完即時出現（唔限 24 小時）、冇時間限制（唔會自動取消）；
+//         加返「我接咗嘅預約」（可以放單重派）
 router.get('/scheduled/upcoming', authDriver, (req, res) => {
-  const now = Date.now();
-  const end = now + 24 * 60 * 60 * 1000;
   const rows = db.prepare(`
     SELECT o.id, o.status, o.scheduled_at, o.created_at, o.pickup_name, o.destination_name,
            o.estimated_fare, o.car_type, o.taxi_type, o.created_by_driver,
@@ -1221,9 +1222,10 @@ router.get('/scheduled/upcoming', authDriver, (req, res) => {
            d.name as driver_name, d.plate as driver_plate
     FROM orders o
     LEFT JOIN drivers d ON o.driver_id = d.id
-    WHERE o.status = 'scheduled' AND o.scheduled_at BETWEEN ? AND ?
+    WHERE o.status = 'scheduled'
     ORDER BY o.scheduled_at ASC
-  `).all(now, end);
+    LIMIT 20
+  `).all();
   // 自己接咗嘅預約單（hold 緊）——預約面板顯示「我嘅預約」＋放單鍵
   const myAccepted = db.prepare(`
     SELECT o.id, o.status, o.scheduled_at, o.created_at, o.pickup_name, o.destination_name,
