@@ -219,15 +219,18 @@ router.post('/passenger/cancel', authPassenger, (req, res) => {
   if (orderId) {
     order = db.prepare('SELECT * FROM orders WHERE id = ? AND passenger_id = ?').get(orderId, req.userId);
   } else {
-    order = db.prepare("SELECT * FROM orders WHERE passenger_id = ? AND status IN ('searching','scheduled') ORDER BY created_at DESC LIMIT 1").get(req.userId);
+    order = db.prepare("SELECT * FROM orders WHERE passenger_id = ? AND status IN ('searching','scheduled','accepted') ORDER BY created_at DESC LIMIT 1").get(req.userId);
   }
   if (!order) return res.status(400).json({ error: '冇可取消嘅訂單' });
-  // 已接單／行車中唔可以乘客單方面取消（要搵客服／司機）
-  if (!['searching', 'scheduled'].includes(order.status)) {
-    return res.status(400).json({ error: '呢張單已接單，唔可以直接取消' });
+  // 已上車（picked_up 或之後）唔可以乘客單方面取消（要搵客服／司機）；
+  // v2.1.14：accepted（司機趕來中、未上車）都允許取消——例如誤入／臨時唔去，
+  // 取消後張單釋放，司機可以接其他單（唔會再卡住「司機趕來中」冇得取消）
+  if (!['searching', 'scheduled', 'accepted'].includes(order.status)) {
+    return res.status(400).json({ error: '呢張單已上車，唔可以直接取消' });
   }
 
-  db.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ?").run(order.id);
+  db.prepare("UPDATE orders SET status = 'cancelled', finished_at = ?, driver_id = NULL WHERE id = ?")
+    .run(Date.now(), order.id);
 
   sseHub.publishToOrder(order.id, 'order-cancelled', { orderId: order.id });
   sseHub.publishToDriverHall('order-cancelled', { orderId: order.id });
