@@ -51,9 +51,12 @@ async function sendFcmToDrivers(db, order, opts = {}) {
   const dest = order.destination?.name || order.destinationName || '目的地';
   const fare = order.estimatedFare || order.estimated_fare || 0;
   const fareText = fare > 0 ? `約 HK$${fare}` : '跳錶';
+  // v2.1.11：預約單通知帶時間（第一句：10月25日 下午3點）
+  const sched = order.scheduledAt ? schedTxt(order.scheduledAt) : '';
+  const schedPrefix = sched ? `預約單：${sched}，` : '';
   const message = {
     tokens: uniqueTokens.map((t) => t.token),
-    notification: { title, body: `${pickup} → ${dest} ｜ ${fareText}` },
+    notification: { title: sched ? `🕒 預約單！` : title, body: `${schedPrefix}${pickup} → ${dest} ｜ ${fareText}` },
     data: {
       orderId: order.id, pickup, dest, fare: String(fare), url: '/driver/hall',
     },
@@ -83,6 +86,17 @@ function haversineKm(lat1, lon1, lat2, lon2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
+// v2.1.11：預約單時間文字（如「10月25日 下午3點」）——通知第一句用
+function schedTxt(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  const h24 = d.getHours();
+  const ampm = h24 < 12 ? '上午' : '下午';
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${d.getMonth() + 1}月${d.getDate()}日${ampm}${h12}點`;
+}
+
 // 發送新單推播俾所有司機（opts.title 可自訂標題，例如出貨單用「新貨單！」）
 async function sendNewOrderPush(db, order, opts = {}) {
   const subs = db.getAllPushSubscriptions();
@@ -96,6 +110,9 @@ async function sendNewOrderPush(db, order, opts = {}) {
   const fare = order.estimatedFare || order.estimated_fare || 0;
   // 費用 0（地點解析唔到／跳錶不定價）→ 唔顯示「約 HK$0」誤導，改顯示「跳錶」
   const fareText = fare > 0 ? `約 HK$${fare}` : '跳錶';
+  // v2.1.11：預約單通知帶時間（第一句：10月25日 下午3點）＋標題改「🕒 預約單！」
+  const sched = order.scheduledAt ? schedTxt(order.scheduledAt) : '';
+  const schedPrefix = sched ? `預約單：${sched}，` : '';
   const pLat = order.passengerLat ?? order.pickup?.lat;
   const pLng = order.passengerLng ?? order.pickup?.lng;
 
@@ -117,8 +134,8 @@ async function sendNewOrderPush(db, order, opts = {}) {
       // 備註/額外要求：有就拼入通知 body，其他司機收推送時直接睇到
       const noteText = note ? ` ｜ 📋${note}` : '';
       const payload = JSON.stringify({
-        title,
-        body: `${pickup} → ${dest} ｜ ${fareText}${extra}${noteText}`,
+        title: sched ? `🕒 預約單！` : title,
+        body: `${schedPrefix}${pickup} → ${dest} ｜ ${fareText}${extra}${noteText}`,
         data: { orderId: order.id, pickup, dest, fare },
         // 傳埋導航目標俾 SW 跳去對應單
         url: '/driver/hall',

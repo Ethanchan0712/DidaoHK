@@ -93,7 +93,8 @@ function getOrderById(id) {
            d.phone as driver_phone, d.car_model as driver_car_model,
            d.rating as driver_rating,
            d.is_vvip as driver_is_vvip,
-           d.seat_capacity as driver_seat_capacity
+           d.seat_capacity as driver_seat_capacity,
+           d.current_lat as driver_lat, d.current_lng as driver_lng
     FROM orders o
     LEFT JOIN passengers p ON o.passenger_id = p.id
     LEFT JOIN drivers d ON o.driver_id = d.id
@@ -225,7 +226,8 @@ router.get('/passenger/current', authPassenger, (req, res) => {
            p.name as passenger_name, p.rating as passenger_rating,
            d.name as driver_name, d.plate as driver_plate,
            d.car_model as driver_car_model, d.rating as driver_rating,
-           d.is_vvip as driver_is_vvip
+           d.is_vvip as driver_is_vvip,
+           d.current_lat as driver_lat, d.current_lng as driver_lng
     FROM orders o
     LEFT JOIN passengers p ON o.passenger_id = p.id
     LEFT JOIN drivers d ON o.driver_id = d.id
