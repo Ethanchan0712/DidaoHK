@@ -1,13 +1,17 @@
 {
-  "name": "【的道】DiDao",
-  "short_name": "【的道】DiDao",
+  "name": "的道 DidaoHK",
+  "short_name": "的道 DidaoHK",
   "description": "的道 DikDou - 香港的士叫車平台，市區/新界/大嶼山/6座位的士",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f3d2e",
   "theme_color": "#0f3d2e",
   "orientation": "portrait",
-  "categories": ["travel", "lifestyle", "navigation"],
+  "categories": [
+    "travel",
+    "lifestyle",
+    "navigation"
+  ],
   "lang": "zh-Hant",
   "icons": [
     {
