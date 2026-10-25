@@ -1220,8 +1220,8 @@ function cleanupUnacceptedOrders() {
     }
   }
 }
-setInterval(cleanupUnacceptedOrders, 30 * 1000);
-console.log('[cleanup] 3分鐘冇人接自動取消已啟動（每 30 秒檢查）');
+setInterval(cleanupUnacceptedOrders, 15 * 1000); // v2.1.18：30秒→15秒，0:00 後更快消失
+console.log('[cleanup] 3分鐘冇人接自動取消已啟動（每 15 秒檢查）');
 
 // ========== 預約叫車排程器（v2.1.9 已停用） ==========
 // v2.1.8 起：預約單一出即派（scheduled 狀態可直接搶單），預約面板照皇牌優先派。
