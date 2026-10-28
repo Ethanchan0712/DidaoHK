@@ -585,8 +585,13 @@ router.get('/driver/hall', authDriver, (req, res) => {
     // 司機出貨單（即時）：公共單，所有 approved+online 司機都見到（跨區都接到）
     // 但出貨者自己唔會見到自己出嘅單（避免誤接自己張單）
     // v2.1.8：預約出貨單（is_scheduled=1）照行皇牌優先（落返下面 phase/距離過濾）
+    // v2.1.48：皇牌直貨單（isDirect=direct → royal_lock=1）鎖定期內，普通司機都唔可以見——
+    //          之前呢個分支直接 return，跳過咗下面嘅 royal_lock 過濾，令普通司機見到（但接唔到）皇牌鎖定單
     if (row.created_by_driver) {
-      if (!row.is_scheduled) return row.driver_posted_from !== req.userId;
+      if (!row.is_scheduled) {
+        if (row.royal_lock === 1 && !isVvip) return false;
+        return row.driver_posted_from !== req.userId;
+      }
       if (row.driver_posted_from === req.userId) return false;
     }
 
