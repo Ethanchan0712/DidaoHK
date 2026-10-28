@@ -118,7 +118,9 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
   const hasDiscountVal = hasDiscount !== undefined ? hasDiscount : (discount === true);
   const tipVal = tipAmount !== undefined ? tipAmount : (tip || 0);
 
-  if (!pickupObj || !destObj || !estimatedFare) {
+  // v2.1.39：接受 estimatedFare 為 0（「跳錶」單——地點搵唔到座標、不定價，實際按錶收費），
+  // 同司機端出貨（line 392）對齊；之前 `!estimatedFare` 令乘客跳錶叫車被拒「參數唔完整」
+  if (!pickupObj || !destObj || estimatedFare === undefined || estimatedFare === null || estimatedFare === '') {
     return res.status(400).json({ error: '參數唔完整' });
   }
 
