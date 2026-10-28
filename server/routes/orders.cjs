@@ -66,7 +66,9 @@ function orderToJson(row) {
     //          司機端 `o.isCargo` 永遠 undefined，令乘客單／貨單類型標籤判斷錯（用戶投訴乘客單顯示「出貨」）
     isCargo: !!row.created_by_driver,
     driverPostedFrom: row.driver_posted_from,
-    passengerPhone: row.passenger_phone,
+    // v2.1.46：乘客電話雙保險——orders.passenger_phone 優先，空就 fallback passengers 表嘅登入電話（p_phone），
+    //          防止舊單／特殊單 passenger_phone 空缺時，司機行車頁睇唔到乘客電話
+    passengerPhone: row.passenger_phone || row.p_phone || null,
     // v2.0.81：出貨單嘅出單司機電話（接單司機接單後聯絡用；大廳唔會返回）
     ownerDriverPhone: row.owner_driver_phone || undefined,
     teishoku: !!row.teishoku,
@@ -92,6 +94,7 @@ function getOrderById(id) {
   const row = db.prepare(`
     SELECT o.*,
            p.name as passenger_name, p.rating as passenger_rating,
+           p.phone as p_phone,
            d.name as driver_name, d.plate as driver_plate,
            d.phone as driver_phone, d.car_model as driver_car_model,
            d.rating as driver_rating,
@@ -823,6 +826,7 @@ router.get('/driver/current', authDriver, (req, res) => {
   const row = db.prepare(`
     SELECT o.*,
            p.name as passenger_name, p.rating as passenger_rating,
+           p.phone as p_phone,
            d.name as driver_name, d.plate as driver_plate,
            d.car_model as driver_car_model, d.rating as driver_rating,
            d.is_vvip as driver_is_vvip

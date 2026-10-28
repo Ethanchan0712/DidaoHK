@@ -264,6 +264,25 @@ router.post('/drivers/:id/approve-vvip', authAdmin, (req, res) => {
   res.json({ driver: safeDriver(updated) });
 });
 
+// ========== 補填司機電話（v2.1.47：舊帳戶／後台建立嘅司機可能冇電話，乘客端睇唔到司機電話） ==========
+router.post('/drivers/:id/set-phone', authAdmin, (req, res) => {
+  const { id } = req.params;
+  const { phone } = req.body || {};
+  const driver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
+  if (!driver) return res.status(404).json({ error: '司機唔存在' });
+
+  const phoneNorm = String(phone || '').replace(/[\s-]/g, '');
+  if (!/^[569]\d{7}$/.test(phoneNorm)) {
+    return res.status(400).json({ error: '請填寫正確電話號碼（8 位數字，5/6/9 開頭）' });
+  }
+  const dup = db.prepare('SELECT id FROM drivers WHERE phone = ? AND id != ?').get(phoneNorm, id);
+  if (dup) return res.status(400).json({ error: '呢個電話已經有另一個司機用緊' });
+
+  db.prepare('UPDATE drivers SET phone = ? WHERE id = ?').run(phoneNorm, id);
+  const updated = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
+  res.json({ driver: safeDriver(updated) });
+});
+
 // ========== 取消 VVIP ==========
 router.post('/drivers/:id/revoke-vvip', authAdmin, (req, res) => {
   const { id } = req.params;
