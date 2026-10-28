@@ -40,8 +40,8 @@ self.addEventListener('push', (event) => {
   } catch (e) { /* 保留預設 */ }
   const options = {
     body: data.body || '有新單，快啲睇下！',
-    icon: 'https://aka.doubaocdn.com/s/pKMrCCXYov',
-    badge: 'https://aka.doubaocdn.com/s/pKMrCCXYov',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
     tag: 'dikdou-order',
     renotify: true,
     data: data,
