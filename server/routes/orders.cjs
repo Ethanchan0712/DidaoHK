@@ -606,14 +606,9 @@ router.get('/driver/hall', authDriver, (req, res) => {
   });
 
   res.json({
-    // v2.0.81 私隱保護：大廳訂單唔帶任何電話（passenger_phone / owner_driver_phone），
-    // 司機接單之後先喺訂單詳情見到電話
-    orders: filtered.map((row) => {
-      const safe = orderToJson(row);
-      delete safe.passengerPhone;
-      delete safe.ownerDriverPhone;
-      return safe;
-    }),
+    // v2.1.41：應用戶要求，司機接貨大廳直接顯示乘客登入電話／出貨司機電話——
+    // 乘客叫車單顯示乘客電話、貨主出貨單顯示出貨司機電話，兩邊可以直接聯絡（移除 v2.0.81 私隱過濾）
+    orders: filtered.map((row) => orderToJson(row)),
     driverIsVvip: isVvip,
     phaseRanges: DISPATCH_PHASE_RANGES,
     phaseDurations: DISPATCH_PHASE_DURATIONS,
