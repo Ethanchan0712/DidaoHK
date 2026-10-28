@@ -62,6 +62,9 @@ function orderToJson(row) {
     isScheduled: !!row.is_scheduled,                // 係咪預約單
     // 司機出貨單（v3）
     createdByDriver: !!row.created_by_driver,
+    // v2.1.40：統一 isCargo 欄位——之前 getOrderById 冇傳 isCargo，
+    //          司機端 `o.isCargo` 永遠 undefined，令乘客單／貨單類型標籤判斷錯（用戶投訴乘客單顯示「出貨」）
+    isCargo: !!row.created_by_driver,
     driverPostedFrom: row.driver_posted_from,
     passengerPhone: row.passenger_phone,
     // v2.0.81：出貨單嘅出單司機電話（接單司機接單後聯絡用；大廳唔會返回）
