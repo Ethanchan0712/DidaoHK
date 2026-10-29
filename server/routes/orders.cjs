@@ -68,7 +68,8 @@ function orderToJson(row) {
     driverPostedFrom: row.driver_posted_from,
     // v2.1.46：乘客電話雙保險——orders.passenger_phone 優先，空就 fallback passengers 表嘅登入電話（p_phone），
     //          防止舊單／特殊單 passenger_phone 空缺時，司機行車頁睇唔到乘客電話
-    passengerPhone: row.passenger_phone || row.p_phone || null,
+    // v2.1.52：出貨單再 fallback 出貨司機電話（貨主出貨冇填客人電話時，接貨司機都可以聯絡到貨主）
+    passengerPhone: row.passenger_phone || (row.created_by_driver ? row.owner_driver_phone : null) || row.p_phone || null,
     // v2.0.81：出貨單嘅出單司機電話（接單司機接單後聯絡用；大廳唔會返回）
     ownerDriverPhone: row.owner_driver_phone || undefined,
     teishoku: !!row.teishoku,
@@ -468,7 +469,7 @@ router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authD
     distanceKm || null, etaMinutes || null,
     pLat, pLng,
     taxiType || 'red', schedTs ? 0 : (dispatchPhase ?? 3), now, now,
-    1, req.userId, passengerPhone || null,
+    1, req.userId, passengerPhone || ownerDriverPhone,
     (isDirectStr === 'teishoku') ? 1 : 0, teishokuPrice || null, isDirectStr,
     royalLock, royalLockExpireAt, ownerDriverPhone,
     schedTs, schedTs ? 1 : 0
