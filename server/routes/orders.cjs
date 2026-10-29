@@ -756,18 +756,24 @@ router.post('/driver/accept/:orderId', authDriver, (req, res) => {
 
 // ========== 司機取消當前單（放棄單，釋放可再接） ==========
 router.post('/driver/cancel-current', authDriver, (req, res) => {
-  const order = db.prepare(`SELECT * FROM orders
-    WHERE driver_id = ? AND status IN ('accepted','picked_up')
+  // v2.1.51：放棄單 robust——任何綁定呢位司機嘅未結束單都可以取消。
+  // 之前淨係認 accepted/picked_up，如果張單狀態異常（殘留單／預約單／幽靈單）就會
+  // 「冇可取消嘅進行中訂單」→ 前端 fallback 清 local → 大廳 poll 又攞返張單 → 無限卡死「del 唔到」。
+  // 而家：一次過取消晒所有綁定呢位司機嘅未結束單（accepted/picked_up/scheduled/殘留），
+  // 防止「del 咗一張仲有另一張」無限循環。
+  const target = db.prepare(`SELECT * FROM orders
+    WHERE driver_id = ? AND status NOT IN ('cancelled','finished','paid')
     ORDER BY created_at DESC LIMIT 1`).get(req.userId);
-  if (!order) return res.status(400).json({ error: '冇可取消嘅進行中訂單' });
+  if (!target) return res.status(400).json({ error: '冇可取消嘅進行中訂單' });
+  const now = Date.now();
+  const affected = db.prepare(`UPDATE orders SET status = 'cancelled', finished_at = ?
+    WHERE driver_id = ? AND status NOT IN ('cancelled','finished','paid')`).run(now, req.userId);
+  const updated = getOrderById(target.id);
 
-  db.prepare("UPDATE orders SET status = 'cancelled', finished_at = ? WHERE id = ?").run(Date.now(), order.id);
-  const updated = getOrderById(order.id);
+  sseHub.publishToOrder(target.id, 'order-cancelled', { order: updated });
+  sseHub.publishToDriverHall('order-cancelled', { orderId: target.id });
 
-  sseHub.publishToOrder(order.id, 'order-cancelled', { order: updated });
-  sseHub.publishToDriverHall('order-cancelled', { orderId: order.id });
-
-  res.json({ ok: true, order: updated });
+  res.json({ ok: true, order: updated, cancelled: affected.changes });
 });
 
 // ========== v2.1.8：司機放單（預約單專用）——接咗嘅預約單可以放返出嚟，重新派（重出[預約]） ==========
