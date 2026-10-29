@@ -80,6 +80,11 @@ router.post('/', rateLimit({ limit: 10, windowMs: 60 * 60 * 1000 }), (req, res) 
     if (!b || typeof b !== 'object' || Object.keys(b).length === 0) {
       return res.status(400).json({ error: '請填寫發佈資料' });
     }
+    // v2.1.50：價格必填且 > 0——防止「缺欄位 0 蚊垃圾單」入庫
+    const priceNum = Number(b.price);
+    if (!isFinite(priceNum) || priceNum <= 0) {
+      return res.status(400).json({ error: '請填寫正確嘅租金（必須大過 0）' });
+    }
     const id = 'rt_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     const ownerKey = String(b.ownerKey || '').slice(0, 50);
     const managePwd = b.managePwd ? hashPwd(b.managePwd) : null;

@@ -59,6 +59,18 @@ router.post('/driver/send', rateLimit({ limit: 30, windowMs: 60 * 1000 }), authD
 // ========== 攞訂單訊息列表 ==========
 router.get('/order/:orderId', authAny, (req, res) => {
   // v2.0.92：加 authAny——聊天記錄都係敏感資料，唔可以公開讀
+  // v2.1.50：再加「張單相關人」驗證——登入咗但唔係張單嘅人一樣唔可以讀
+  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.orderId);
+  if (!order) return res.status(404).json({ error: '訂單唔存在' });
+  const uid = String(req.userId || '');
+  const isPassenger = order.passenger_id && String(order.passenger_id) === uid;
+  const isDriver = order.driver_id && String(order.driver_id) === uid;
+  const isPoster = order.driver_posted_from && String(order.driver_posted_from) === uid;
+  const isAdmin = req.userRole === 'admin' || req.userRole === 'operator';
+  if (!isPassenger && !isDriver && !isPoster && !isAdmin) {
+    return res.status(403).json({ error: '冇權限睇呢張訂單嘅訊息' });
+  }
+
   const rows = db.prepare(`
     SELECT id, order_id, sender_role as \"from\", text, timestamp
     FROM chat_messages

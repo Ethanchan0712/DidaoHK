@@ -5,6 +5,10 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// v2.1.50：trust proxy 1——Render 等 proxy 後面正確攞真實 IP；
+// rate-limit 用 req.ip 而唔信 client 自設嘅 X-Forwarded-For（防止偽造 IP 繞過限流）
+app.set('trust proxy', 1);
+
 // v2.0.92 安全加固：
 // 1) 日誌唔記錄 query string（SSE/訂閱 token 經 query 傳遞，記錄落 log 會洩漏）
 app.use((req, res, next) => {
@@ -136,8 +140,19 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🚕 的道後端服務啟動成功！`);
   console.log(`   端口: ${PORT}`);
   console.log(`   API:  http://localhost:${PORT}/api/`);
-  console.log(`   管理員: admin / lovevivi815\n`);
+  console.log(`   管理員帳號: admin（密碼唔會喺日誌顯示）\n`);
 });
+
+// v2.1.50：偵測示範帳號殘留，提醒上架前刪除（安全加固）
+try {
+  const db = require('./db/index.cjs');
+  const demoCount = db.prepare("SELECT COUNT(*) as c FROM drivers WHERE username IN ('demo123','demo456','demo','driver1','driver2')").get().c;
+  if (demoCount > 0) {
+    console.warn(`[SECURITY] 偵測到 ${demoCount} 個示範/測試司機帳號仍存在——上架前必須刪除（admin 後台或 DB 直接刪）`);
+  }
+} catch (e) {
+  // db 初始化前唔好 crash——只係安全提醒
+}
 
 // 預約叫車排程器（v2.1.0）：每 30 秒檢查，提前 15 分鐘派單
 try {

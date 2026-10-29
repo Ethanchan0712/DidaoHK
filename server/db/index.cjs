@@ -344,7 +344,7 @@ if (adminCount === 0) {
   db.prepare('INSERT INTO admins (id, username, password, role, created_at) VALUES (?, ?, ?, ?, ?)').run(
     'admin_001', 'admin', hash, 'admin', Date.now()
   );
-  console.log('[DB] Admin seeded: admin / lovevivi815');
+  console.log('[DB] Admin seeded（密碼唔會喺日誌顯示）');
 }
 // 營運主任（operator）——淨係批核，唔可以睇訂單/收入/刪人/開皇牌
 const opCheck = db.prepare('SELECT COUNT(*) as c FROM admins WHERE username = ? OR username = ?');
@@ -354,7 +354,7 @@ if (opCount === 0) {
   db.prepare('INSERT INTO admins (id, username, password, role, created_at) VALUES (?, ?, ?, ?, ?)').run(
     'op_001', '主任', hash, 'operator', Date.now()
   );
-  console.log('[DB] 營運主任 seeded: 主任 / 55888712');
+  console.log('[DB] 營運主任 seeded');
 }
 
 // ========== Seed 示範司機（方便測試；皇牌 demo123 / 普通 demo456） ==========

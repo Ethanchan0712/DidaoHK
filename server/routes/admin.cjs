@@ -182,6 +182,8 @@ router.post('/drivers/:id/approve', authOperator, (req, res) => {
 
   const now = Date.now();
   const DAY = 24 * 3600 * 1000;
+  // v2.1.50：重複 approve 唔覆蓋原本嘅批准時間（保留首次批核時間做審計）
+  const approvedAt = driver.status === 'approved' && driver.approved_at ? driver.approved_at : now;
   // 批 VIP 試用 10 日（由批核嗰刻起計時）
   let vipExpires = grantVip ? now + 10 * DAY : (driver.vip_expires_at ?? null);
   let isVip = grantVip ? 1 : (driver.is_vip || 0);
@@ -193,7 +195,7 @@ router.post('/drivers/:id/approve', authOperator, (req, res) => {
 
   db.prepare(
     `UPDATE drivers SET status = 'approved', approved_at = ?, is_vip = ?, vip_expires_at = ?, is_vvip = ?, vvip_expires_at = ? WHERE id = ?`
-  ).run(now, isVip, vipExpires, isVvip, vvipExpires, id);
+  ).run(approvedAt, isVip, vipExpires, isVvip, vvipExpires, id);
   const updated = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
 
   sseHub.publishToAdmin('driver-updated', { driver: safeDriver(updated) });

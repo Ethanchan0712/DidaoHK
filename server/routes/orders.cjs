@@ -589,7 +589,8 @@ router.get('/driver/hall', authDriver, (req, res) => {
     //          之前呢個分支直接 return，跳過咗下面嘅 royal_lock 過濾，令普通司機見到（但接唔到）皇牌鎖定單
     if (row.created_by_driver) {
       if (!row.is_scheduled) {
-        if (row.royal_lock === 1 && !isVvip) return false;
+        // v2.1.50：加過期判斷——鎖定過咗都唔再擋普通司機
+        if (row.royal_lock === 1 && Number(row.royal_lock_expire_at || 0) > Date.now() && !isVvip) return false;
         return row.driver_posted_from !== req.userId;
       }
       if (row.driver_posted_from === req.userId) return false;
@@ -599,7 +600,8 @@ router.get('/driver/hall', authDriver, (req, res) => {
     if (myRejections.has(row.id)) return false;
 
     // v2.0.78/79：皇牌鎖定期內（royal_lock=1），普通司機睇唔到，只限皇牌(VVIP)司機
-    if (row.royal_lock === 1 && !isVvip) return false;
+    // v2.1.50：加過期判斷
+    if (row.royal_lock === 1 && Number(row.royal_lock_expire_at || 0) > Date.now() && !isVvip) return false;
 
     // VVIP 司機：所有階段嘅單都睇到
     if (isVvip) return true;
@@ -709,7 +711,9 @@ router.post('/driver/accept/:orderId', authDriver, (req, res) => {
 
   // v2.0.78/79：皇牌鎖定期單（royal_lock=1）——鎖定期內淨係皇牌(VVIP)司機可以接，
   // 到期自動解鎖（hall 查詢時已解鎖）；普通司機喺鎖定期內直接拒絕
-  if (order.royal_lock === 1 && !vvipActive) {
+  // v2.1.50：加過期判斷——就算 flag 未清（直接 accept 冇經 hall），過期咗都當冇鎖
+  const royalLockActive = order.royal_lock === 1 && Number(order.royal_lock_expire_at || 0) > Date.now();
+  if (royalLockActive && !vvipActive) {
     return res.status(403).json({ error: '呢張皇牌單仲喺皇牌司機鎖定期（10秒），未開放俾普通司機' });
   }
 
@@ -1144,9 +1148,19 @@ router.post('/driver/report-flood', rateLimit({ limit: 5, windowMs: 60 * 1000 })
 });
 
 // ========== 訂單詳情 ==========
-router.get('/:id', (req, res) => {
+// v2.1.50：加權限驗證——訂單含乘客/司機電話同位置，淨係相關人可以睇：
+// 乘客（passenger_id）、接單司機（driver_id）、出貨司機（driver_posted_from）
+router.get('/:id', authAny, (req, res) => {
   const order = getOrderById(req.params.id);
   if (!order) return res.status(404).json({ error: '訂單唔存在' });
+  const uid = String(req.userId || '');
+  const isPassenger = order.passenger && String(order.passenger.id) === uid;
+  const isDriver = order.driver && String(order.driver.id) === uid;
+  const isPoster = order.driverPostedFrom && String(order.driverPostedFrom) === uid;
+  const isAdmin = req.userRole === 'admin' || req.userRole === 'operator';
+  if (!isPassenger && !isDriver && !isPoster && !isAdmin) {
+    return res.status(403).json({ error: '冇權限睇呢張訂單' });
+  }
   res.json({ order });
 });
 
@@ -1154,7 +1168,18 @@ router.get('/:id', (req, res) => {
 router.get('/stream/order/:orderId', authAny, (req, res) => {
   // v2.0.92：加咗 authAny——訂單 stream 含乘客位置/電話等敏感資料，
   // 以前「認 orderId 就夠」，orderId 洩漏（截獲/日誌）就可以偷睇單。而家必須登入先訂閱。
+  // v2.1.50：再加「張單相關人」驗證——登入咗但唔係張單嘅人一樣唔可以訂閱
   const { orderId } = req.params;
+  const order = getOrderById(orderId);
+  if (!order) return res.status(404).json({ error: '訂單唔存在' });
+  const uid = String(req.userId || '');
+  const isPassenger = order.passenger && String(order.passenger.id) === uid;
+  const isDriver = order.driver && String(order.driver.id) === uid;
+  const isPoster = order.driverPostedFrom && String(order.driverPostedFrom) === uid;
+  const isAdmin = req.userRole === 'admin' || req.userRole === 'operator';
+  if (!isPassenger && !isDriver && !isPoster && !isAdmin) {
+    return res.status(403).json({ error: '冇權限訂閱呢張訂單' });
+  }
   sseHub.subscribe(req, res, 'order', orderId);
 });
 

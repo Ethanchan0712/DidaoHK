@@ -13,11 +13,13 @@ setInterval(() => {
 }, 60 * 1000).unref?.();
 
 function clientIp(req) {
-  const fwd = req.headers['x-forwarded-for'];
-  if (typeof fwd === 'string' && fwd.trim()) {
-    // Render 等 proxy 後面攞最前嘅真實 IP（第一個）
-    return fwd.split(',')[0].trim();
-  }
+  // v2.1.50：唔再直接信 X-Forwarded-For 第一個——攻擊者可以自設 XFF 偽造 IP 繞過限流。
+  // 用 Express req.ip（配合 index.cjs `app.set('trust proxy', 1)`），Express 只信任 proxy 附加嘅最後一跳，
+  // client 自設嘅 XFF 會被忽略，取得真實來源 IP。
+  try {
+    const ip = req.ip;
+    if (ip && ip !== 'unknown') return ip;
+  } catch { /* fallback */ }
   return req.socket?.remoteAddress || 'unknown';
 }
 
