@@ -326,6 +326,16 @@ router.post('/driver/update-profile', authDriver, (req, res) => {
     updates.push('seat_capacity = ?');
     params.push(seatCapacity);
   }
+  // v2.1.66：司機車牌（改完即時反映，所有司機車牌同步更新）
+  const { plate: plateInput } = req.body;
+  if (typeof plateInput === 'string' && plateInput.trim()) {
+    const p = plateInput.trim().toUpperCase().slice(0, 10);
+    if (!/^[A-Z0-9]{1,10}$/.test(p)) {
+      return res.status(400).json({ error: '車牌號碼格式唔啱（只可英數，最多 10 位）' });
+    }
+    updates.push('plate = ?');
+    params.push(p);
+  }
   if (updates.length === 0) return res.status(400).json({ error: '冇資料要更新' });
 
   params.push(userId);
