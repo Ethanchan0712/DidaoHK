@@ -20,6 +20,9 @@ function orderToJson(row) {
       id: row.passenger_id,
       name: row.passenger_name,
       rating: row.passenger_rating,
+      // v2.1.71：補返 phone 欄位——前端 apiOrderToLocal fallback 係 apiOrder.passenger?.phone，
+      // 之前冇返令 refresh 之後電話號碼消失（初次接單 response 有，refresh 用 /driver/current 就冇）
+      phone: row.p_phone || undefined,
     } : undefined,
     driver: row.driver_id ? {
       id: row.driver_id,
@@ -767,14 +770,34 @@ router.post('/driver/cancel-current', authDriver, (req, res) => {
     ORDER BY created_at DESC LIMIT 1`).get(req.userId);
   if (!target) return res.status(400).json({ error: '冇可取消嘅進行中訂單' });
   const now = Date.now();
-  const affected = db.prepare(`UPDATE orders SET status = 'cancelled', finished_at = ?
-    WHERE driver_id = ? AND status NOT IN ('cancelled','finished','paid')`).run(now, req.userId);
-  const updated = getOrderById(target.id);
 
-  sseHub.publishToOrder(target.id, 'order-cancelled', { order: updated });
-  sseHub.publishToDriverHall('order-cancelled', { orderId: target.id });
+  // v2.1.74：司機取消即時單（accepted/picked_up 且非預約）→ 重派（status 變返 searching），等其他司機接
+  // 預約單（scheduled）先真係 cancel——因為預約未到時間，唔會有司機即刻接
+  const isScheduled = !!target.is_scheduled;
+  let updated;
+  if (!isScheduled && (target.status === 'accepted' || target.status === 'picked_up')) {
+    // 即時單：重派
+    db.prepare(`UPDATE orders SET
+      status = 'searching', driver_id = NULL, accepted_at = NULL,
+      picked_up_at = NULL, driver_lat = NULL, driver_lng = NULL,
+      dispatch_phase = 0, dispatch_phase_started_at = ?,
+      royal_lock = 0, royal_lock_expire_at = NULL
+      WHERE id = ?`).run(now, target.id);
+    updated = getOrderById(target.id);
+    // 通知所有司機：新單重新入池
+    sseHub.publishToDriverHall('new-order', { order: updated });
+    // 通知乘客：司機走咗，重新搵司機
+    sseHub.publishToOrder(target.id, 'order-driver-released', { order: updated });
+  } else {
+    // 預約單 / 其他：真係 cancel
+    db.prepare(`UPDATE orders SET status = 'cancelled', finished_at = ?
+      WHERE driver_id = ? AND status NOT IN ('cancelled','finished','paid')`).run(now, req.userId);
+    updated = getOrderById(target.id);
+    sseHub.publishToOrder(target.id, 'order-cancelled', { order: updated });
+    sseHub.publishToDriverHall('order-cancelled', { orderId: target.id });
+  }
 
-  res.json({ ok: true, order: updated, cancelled: affected.changes });
+  res.json({ ok: true, order: updated, rescheduled: !isScheduled && (target.status === 'accepted' || target.status === 'picked_up') });
 });
 
 // ========== v2.1.8：司機放單（預約單專用）——接咗嘅預約單可以放返出嚟，重新派（重出[預約]） ==========
