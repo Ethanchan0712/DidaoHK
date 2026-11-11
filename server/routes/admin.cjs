@@ -274,8 +274,9 @@ router.post('/drivers/:id/set-phone', authAdmin, (req, res) => {
   if (!driver) return res.status(404).json({ error: '司機唔存在' });
 
   const phoneNorm = String(phone || '').replace(/[\s-]/g, '');
-  if (!/^[569]\d{7}$/.test(phoneNorm)) {
-    return res.status(400).json({ error: '請填寫正確電話號碼（8 位數字，5/6/9 開頭）' });
+  // v2.1.89：放寬——香港 8 位（任何字頭）＋內地 11 位
+  if (!/^\d{8,11}$/.test(phoneNorm)) {
+    return res.status(400).json({ error: '請填寫正確電話號碼（香港 8 位／內地 11 位）' });
   }
   const dup = db.prepare('SELECT id FROM drivers WHERE phone = ? AND id != ?').get(phoneNorm, id);
   if (dup) return res.status(400).json({ error: '呢個電話已經有另一個司機用緊' });

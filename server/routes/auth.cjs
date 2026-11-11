@@ -149,8 +149,9 @@ router.post('/driver/register', registerLimiter, (req, res) => {
   // 電話必填（會員號碼＝電話；UI 註冊頁 validatePhone 都係咁）：DB 對 phone 有 UNIQUE 約束，
   // 唔填電話會令第二個無電話司機撞 UNIQUE 或者誤報「已註冊」，所以 server 要同 UI 一致咁要求
   const phoneNorm = String(phone || '').replace(/[\s-]/g, '');
-  if (!/^[569]\d{7}$/.test(phoneNorm)) {
-    return res.status(400).json({ error: '請填寫正確電話號碼（8 位數字）' });
+  // v2.1.89：放寬電話驗證——香港 8 位（任何字頭，包括 7 字頭）＋內地 11 位
+  if (!/^\d{8,11}$/.test(phoneNorm)) {
+    return res.status(400).json({ error: '請填寫正確電話號碼（香港 8 位／內地 11 位數字）' });
   }
 
   // v2.0.83：司機揀自己車型（紅的/綠的 + 4座/6座）——normalize 防禦亂傳
