@@ -59,6 +59,7 @@ function orderToJson(row) {
     passengerLat: row.passenger_lat,
     passengerLng: row.passenger_lng,
     taxiType: row.taxi_type,
+    taxiDesignated: !!row.taxi_designated,
     driverRating: row.driver_rating,
     passengerRating: row.passenger_rating,
     scheduledAt: row.scheduled_at || undefined,     // 預約叫車（毫秒時間戳）
@@ -119,7 +120,7 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
     pickup, destination, carType, hasDiscount, tipAmount, estimatedFare, distanceKm, etaMinutes, taxiType,
     pickupName, pickupLat, pickupLng, destinationName, destinationLat, destinationLng,
     discount, tip, carModel, passengerNotes,
-    scheduledAt
+    scheduledAt, taxiDesignated
   } = req.body;
 
   // Support both flat and nested formats
@@ -161,6 +162,8 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
     return res.status(400).json({ error: '預約時間太近，請改為即時叫車或揀更遲嘅時間' });
   }
   const orderStatus = schedTs ? 'scheduled' : 'searching';
+  // v2.1.92：乘客指定新界綠的專屬——紅的司機永遠睇唔到（淨係揀綠的先至生效）
+  const designatedVal = (taxiType === 'green' && (taxiDesignated === true || taxiDesignated === 1 || taxiDesignated === '1')) ? 1 : 0;
   const pLat = pickupObj.lat ?? 22.3;
   const pLng = pickupObj.lng ?? 114.17;
   // destination 同 pickup 一樣要 fallback：前端 geocode 失敗（例如自訂地址查唔到座標）
@@ -178,8 +181,8 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
     taxi_type, dispatch_phase, dispatch_phase_started_at, created_at,
     passenger_phone,
     created_by_driver, driver_posted_from,
-    scheduled_at, is_scheduled
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?, ?)`).run(
+    scheduled_at, is_scheduled, taxi_designated
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?, ?, ?)`).run(
     id, orderStatus, req.userId,
     pickupObj.name || '上車點', pLat, pLng,
     destObj.name || '目的地', dLat, dLng,
@@ -190,7 +193,8 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
     taxiType || 'red', now, now,
     req.user.phone || null,
     req.userId,
-    schedTs, schedTs ? 1 : 0
+    schedTs, schedTs ? 1 : 0,
+    designatedVal
   );
 
   const order = getOrderById(id);
@@ -535,7 +539,7 @@ router.post('/driver/cancel-post/:orderId', authDriver, (req, res) => {
 // ========== 司機接單大廳列表 ==========
 router.get('/driver/hall', authDriver, (req, res) => {
   // 淨係俾 approved 同 online 嘅司機睇
-  const driver = db.prepare('SELECT status, online, is_vvip, current_lat, current_lng FROM drivers WHERE id = ?').get(req.userId);
+  const driver = db.prepare('SELECT status, online, is_vvip, is_vip, vvip_expires_at, vip_expires_at, current_lat, current_lng, taxi_type FROM drivers WHERE id = ?').get(req.userId);
   if (!driver || driver.status !== 'approved') {
     return res.json({ orders: [] });
   }
@@ -560,6 +564,13 @@ router.get('/driver/hall', authDriver, (req, res) => {
   const driverLat = driver.current_lat || 22.3;
   const driverLng = driver.current_lng || 114.17;
   const isVvip = !!driver.is_vvip;
+  // v2.1.92：司機帳戶嘅的士類型（'red' 市區紅的 / 'green' 新界綠的）
+  const driverTaxi = driver.taxi_type || 'red';
+  // 會員級別（計有效期）——綠的單開放俾紅的嘅等候時間跟級別分級
+  const vvipActive = !!driver.is_vvip && (!driver.vvip_expires_at || Number(driver.vvip_expires_at) > Date.now());
+  const vipActive = !!driver.is_vip && (!driver.vip_expires_at || Number(driver.vip_expires_at) > Date.now());
+  // 王牌 3:00 後見；VIP 3:10 後見；普通 3:30 後見
+  const greenFallbackSec = vvipActive ? 180 : vipActive ? 190 : 210;
 
   const rows = db.prepare(`
     SELECT o.*,
@@ -602,6 +613,19 @@ router.get('/driver/hall', authDriver, (req, res) => {
 
     // 拒單記錄：呢位司機拒過嘅單唔會再派俾佢
     if (myRejections.has(row.id)) return false;
+
+    // v2.1.92：按的士類型劃分接單
+    //  - 新界綠的司機：睇唔到市區紅的嘅單（任何時間都唔顯示）
+    //  - 市區紅的司機：新界綠的單優先俾綠的；過咗等候時間先開放——王牌 3:00、VIP 3:10、普通 3:30
+    //  - 皇牌司機都跟從呢個規則（唔再一出單所有皇牌跨類型都見到）
+    const orderTaxi = row.taxi_type || 'red';
+    if (orderTaxi === 'red' && driverTaxi === 'green') return false;
+    if (orderTaxi === 'green' && driverTaxi === 'red') {
+      // 指定新界專屬單：紅的司機由頭到尾都睇唔到
+      if (row.taxi_designated) return false;
+      const ageBase = Number(row.created_at || 0);
+      if ((now - ageBase) / 1000 < greenFallbackSec) return false;
+    }
 
     // v2.0.78/79：皇牌鎖定期內（royal_lock=1），普通司機睇唔到，只限皇牌(VVIP)司機
     // v2.1.50：加過期判斷
@@ -703,11 +727,30 @@ router.post('/driver/accept/:orderId', authDriver, (req, res) => {
     return res.status(400).json({ error: '訂單已經俾人接咗或者取消咗' });
   }
 
+  // v2.1.92：類型守門（防繞過 hall 直接 call API）
+  //  - 新界綠的：唔可以接市區紅的單
+  //  - 市區紅的：新界單未過等候時間唔可以接——王牌 3:00、VIP 3:10、普通 3:30
+  const orderTaxi = order.taxi_type || 'red';
+  const driverTaxi = driver.taxi_type || 'red';
+  const vvipActive = !!driver.is_vvip && (!driver.vvip_expires_at || Number(driver.vvip_expires_at) > Date.now());
+  const vipActive = !!driver.is_vip && (!driver.vip_expires_at || Number(driver.vip_expires_at) > Date.now());
+  const greenFallbackSec = vvipActive ? 180 : vipActive ? 190 : 210;
+  if (orderTaxi === 'red' && driverTaxi === 'green') {
+    return res.status(403).json({ error: '你係新界的士（綠的），呢張係市區紅的單，唔可以接' });
+  }
+  if (orderTaxi === 'green' && driverTaxi === 'red') {
+    if (order.taxi_designated) {
+      return res.status(403).json({ error: '呢張係指定新界的士專屬單，市區的士唔可以接' });
+    }
+    const ageBase = Number(order.created_at || 0);
+    if ((Date.now() - ageBase) / 1000 < greenFallbackSec) {
+      return res.status(403).json({ error: `新界單仲喺綠的優先期（${Math.floor(greenFallbackSec / 60)}分${greenFallbackSec % 60}秒），未開放俾市區的士` });
+    }
+  }
+
   // 會員級別接單鎖（後端校驗，同前端一致——防繞過前端直接 call API 搶單）
   // 皇牌（vvip）：即刻接得；VIP：10 秒後先接得；普通：30 秒後先接得
   const elapsedSec = Math.floor((Date.now() - (order.created_at || Date.now())) / 1000);
-  const vvipActive = !!driver.is_vvip && (!driver.vvip_expires_at || Number(driver.vvip_expires_at) > Date.now());
-  const vipActive = !!driver.is_vip && (!driver.vip_expires_at || Number(driver.vip_expires_at) > Date.now());
   const minWaitSec = vvipActive ? 0 : vipActive ? 10 : 30;
   if (minWaitSec > 0 && elapsedSec < minWaitSec) {
     return res.status(403).json({ error: `仲要等 ${minWaitSec - elapsedSec} 秒先可以接單` });
@@ -1260,23 +1303,27 @@ console.log('[cleanup] 幽靈單自動清理已啟動（90 分鐘無心跳自動
 // 即時單（searching）出咗 3 分鐘冇司機接 → 自動取消＋通知乘客；
 // 預約單（scheduled）一出即派（預約搶單），3 分鐘冇人搶 → 都自動取消
 // （司機放單重出後 created_at 會 reset，重新計 3 分鐘）
+// v2.1.92：綠的（新界）單要等紅的跨類型 fallback——王牌 3:00 / VIP 3:10 / 普通 3:30，
+//          所以綠的單延長到 4 分鐘先自動取消；紅的單維持 3 分鐘
 function cleanupUnacceptedOrders() {
-  const t3 = Date.now() - 3 * 60 * 1000;
+  const nowTs = Date.now();
+  const cutoffRed = nowTs - 3 * 60 * 1000;
+  const cutoffGreen = nowTs - 4 * 60 * 1000;
   let rows = [];
   try {
-    // v2.1.8：淨係即時單（searching）3 分鐘冇人接先自動取消；
-    // 預約單（scheduled）冇時間限制，唔會自動清空
     rows = db.prepare(
-      "SELECT id, status FROM orders WHERE status = 'searching' AND created_at < ?"
-    ).all(t3);
+      "SELECT id, status, taxi_type, created_at FROM orders WHERE status = 'searching'"
+    ).all();
   } catch { return; }
   if (!rows.length) return;
   const cancel = db.prepare(
     "UPDATE orders SET status = 'cancelled', finished_at = ? WHERE id = ? AND status = 'searching'"
   );
   for (const r of rows) {
+    const cutoff = r.taxi_type === 'green' ? cutoffGreen : cutoffRed;
+    if (Number(r.created_at || nowTs) >= cutoff) continue;
     try {
-      const info = cancel.run(Date.now(), r.id);
+      const info = cancel.run(nowTs, r.id);
       if (info.changes === 0) continue;
       const updated = getOrderById(r.id);
       if (updated) {

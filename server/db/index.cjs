@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS orders (
   passenger_lat REAL,
   passenger_lng REAL,
   taxi_type TEXT DEFAULT 'red',
+  taxi_designated INTEGER DEFAULT 0,
   driver_rating INTEGER,
   passenger_rating INTEGER,
   -- VVIP 分級派單
@@ -163,6 +164,7 @@ CREATE INDEX IF NOT EXISTS idx_orders_dispatch ON orders(dispatch_phase, status)
   add('complaint_reply', 'complaint_reply TEXT');
   add('scheduled_at', 'scheduled_at INTEGER');       // 預約叫車：預約時間（毫秒）；NULL=即時單
   add('is_scheduled', 'is_scheduled INTEGER DEFAULT 0');
+  add('taxi_designated', 'taxi_designated INTEGER DEFAULT 0'); // v2.1.92：乘客指定綠的專屬，紅的永遠睇唔到
 })();
 
 // ========== 兼容舊數據庫：drivers 補 id_front4 ==========

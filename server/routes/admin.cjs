@@ -286,6 +286,22 @@ router.post('/drivers/:id/set-phone', authAdmin, (req, res) => {
   res.json({ driver: safeDriver(updated) });
 });
 
+// ========== v2.1.93：管理員改司機紅的／綠的類型 ==========
+router.post('/drivers/:id/set-taxi-type', authAdmin, (req, res) => {
+  const { id } = req.params;
+  const { taxiType } = req.body || {};
+  const driver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
+  if (!driver) return res.status(404).json({ error: '司機唔存在' });
+
+  const taxiNorm = taxiType === 'green' ? 'green' : taxiType === 'red' ? 'red' : null;
+  if (!taxiNorm) return res.status(400).json({ error: '的士類型只可以係 red（紅的）或 green（綠的）' });
+
+  db.prepare('UPDATE drivers SET taxi_type = ? WHERE id = ?').run(taxiNorm, id);
+  const updated = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
+  sseHub.publishToAdmin('driver-updated', { driver: safeDriver(updated) });
+  res.json({ driver: safeDriver(updated) });
+});
+
 // ========== 取消 VVIP ==========
 router.post('/drivers/:id/revoke-vvip', authAdmin, (req, res) => {
   const { id } = req.params;
