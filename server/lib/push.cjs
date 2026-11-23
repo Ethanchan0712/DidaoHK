@@ -213,4 +213,63 @@ async function sendOrderUpdatePush(db, order, title, body) {
   return results;
 }
 
-module.exports = { VAPID, sendNewOrderPush, sendOrderUpdatePush, sendFcmToDrivers };
+// v2.1.98：管理員平台公告——推俾所有已訂閱司機（Web Push ＋ FCM），唔做派單類型過濾
+async function sendAnnouncementPush(db, message) {
+  const text = String(message || '').trim();
+  if (!text) return { sent: 0, fcm: 0 };
+  const title = '📢 平台公告';
+  const payload = JSON.stringify({
+    title,
+    body: text,
+    data: { announcement: true, url: '/driver/hall' },
+    url: '/driver/hall',
+  });
+
+  const results = { sent: 0, failed: 0, errors: [] };
+  const subs = db.getAllPushSubscriptions();
+  const uniqueSubs = [...new Map((subs || []).filter((s) => s.endpoint).map((s) => [s.endpoint, s])).values()];
+  for (const sub of uniqueSubs) {
+    try {
+      await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.keys_p256dh, auth: sub.keys_auth } },
+        payload,
+        { TTL: MAX_TTL }
+      );
+      results.sent += 1;
+    } catch (e) {
+      results.failed += 1;
+      if (e.statusCode === 410 || e.statusCode === 404 || (e.statusCode >= 400 && e.statusCode < 500)) {
+        db.removePushSubscription(sub.endpoint);
+      } else if (results.errors.length < 3) {
+        results.errors.push(e.message);
+      }
+    }
+  }
+
+  // FCM
+  let fcmCount = 0;
+  try {
+    const app = getFcmApp();
+    if (app) {
+      const tokens = db.getAllFcmTokens();
+      const uniqueTokens = [...new Map((tokens || []).map((t) => [t.token, t])).values()];
+      if (uniqueTokens.length > 0) {
+        const r = await app.messaging().sendEachForMulticast({
+          tokens: uniqueTokens.map((t) => t.token),
+          notification: { title, body: text },
+          data: { announcement: '1', url: '/driver/hall' },
+          android: { priority: 'high', notification: { channelId: 'new-order', sound: 'default' } },
+        });
+        fcmCount = r.successCount;
+        r.responses.forEach((resp, i) => {
+          if (!resp.success && uniqueTokens[i]) db.removeFcmToken(uniqueTokens[i].token);
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[fcm] 公告推送失敗:', e.message);
+  }
+  return { ...results, fcm: fcmCount };
+}
+
+module.exports = { VAPID, sendNewOrderPush, sendOrderUpdatePush, sendFcmToDrivers, sendAnnouncementPush };

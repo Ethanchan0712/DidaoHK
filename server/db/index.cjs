@@ -250,6 +250,16 @@ db.prepare(`CREATE TABLE IF NOT EXISTS flood_reports (
 )`).run();
 console.log('[DB] flood_reports table ready');
 
+// ========== 管理員平台公告（broadcast 俾所有司機） ==========
+db.prepare(`CREATE TABLE IF NOT EXISTS admin_announcements (
+  id TEXT PRIMARY KEY,
+  message TEXT NOT NULL,
+  created_by TEXT,
+  created_at INTEGER,
+  expires_at INTEGER
+)`).run();
+console.log('[DB] admin_announcements table ready');
+
 // ========== 租車市場表（出租單俾所有人睇到） ==========
 db.exec(`
 CREATE TABLE IF NOT EXISTS rental_posts (

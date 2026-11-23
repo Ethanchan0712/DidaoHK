@@ -4,6 +4,7 @@ const path = require('path');
 const db = require('../db/index.cjs');
 const sseHub = require('../sse/hub.cjs');
 const { authAdmin, authOperator } = require('../middleware/auth.cjs');
+const { sendAnnouncementPush } = require('../lib/push.cjs');
 
 const router = express.Router();
 
@@ -493,6 +494,28 @@ router.post('/restore', authAdmin, (req, res) => {
   } catch (e) {
     res.status(500).json({ error: '還原失敗: ' + (e.message || '') });
   }
+});
+
+// ========== 平台公告（broadcast 俾所有司機） ==========
+router.post('/announcements', authAdmin, (req, res) => {
+  const message = String(req.body?.message || '').trim();
+  if (!message) return res.status(400).json({ error: '公告內容唔可以為空' });
+  if (message.length > 200) return res.status(400).json({ error: '公告最長 200 字' });
+  const id = 'AN' + Math.random().toString(36).slice(2, 8).toUpperCase() + Date.now().toString().slice(-4);
+  const now = Date.now();
+  const expiresAt = now + 7 * 24 * 3600 * 1000; // 7 日內開 App 都見到最新一則
+  db.prepare('INSERT INTO admin_announcements (id, message, created_by, created_at, expires_at) VALUES (?,?,?,?,?)')
+    .run(id, message, req.user?.username || req.userId, now, expiresAt);
+  const announcement = { id, message, createdAt: now, expiresAt };
+  // SSE 即時推送在線司機；Web Push／FCM 推俾已訂閱司機
+  sseHub.publishToDriverHall('admin-announcement', { announcement });
+  sendAnnouncementPush(db, message).catch((err) => console.warn('[announcement] push error:', err.message));
+  res.json({ ok: true, announcement });
+});
+
+router.get('/announcements', authAdmin, (req, res) => {
+  const rows = db.prepare('SELECT * FROM admin_announcements ORDER BY created_at DESC LIMIT 50').all();
+  res.json({ announcements: rows.map(toCamel) });
 });
 
 module.exports = router;

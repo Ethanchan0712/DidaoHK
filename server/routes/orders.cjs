@@ -1401,6 +1401,20 @@ router.get('/scheduled/upcoming', authDriver, (req, res) => {
   res.json({ orders: visibleRows.map((r) => map(r, false)), myAccepted: myAccepted.map((r) => map(r, true)) });
 });
 
+// ========== 司機端：最新平台公告（開 App 攞返未過期嘅最新一則） ==========
+router.get('/announcements/latest', authDriver, (req, res) => {
+  const row = db.prepare('SELECT id, message, created_at, expires_at FROM admin_announcements WHERE expires_at > ? ORDER BY created_at DESC LIMIT 1').get(Date.now());
+  if (!row) return res.json({ announcement: null });
+  res.json({
+    announcement: {
+      id: row.id,
+      message: row.message,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+    },
+  });
+});
+
 module.exports = router;
 module.exports.startOrderScheduler = startOrderScheduler;
 
