@@ -202,23 +202,15 @@ router.post('/passenger/request', rateLimit({ limit: 12, windowMs: 60 * 1000 }),
   // v2.1.8：預約搶單——預約單一出即派（照皇牌優先），司機可以提早搶定（hold）
   // v2.1.12：預約單照廣播＋播報＋推播（之前漏咗——淨係即時單有 VVIP/hall/push，
   //          令乘客出嘅預約單司機冇即時通知、冇語音播報）
-  if (!schedTs) {
-    // 即時單：VVIP 分級派單（普通司機要等 dispatch phase 升級先睇到）
-    const vvipDrivers = db.prepare(
-      "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved'"
-    ).all();
-    vvipDrivers.forEach(d => {
-      sseHub.publishToDriver(d.id, 'new-vvip-order', { order });
-    });
-  } else {
-    // 預約單：一出即派（照皇牌優先）——VVIP 司機都即時收到
-    const vvipDrivers = db.prepare(
-      "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved'"
-    ).all();
-    vvipDrivers.forEach(d => {
-      sseHub.publishToDriver(d.id, 'new-vvip-order', { order });
-    });
-  }
+  // v2.1.96：皇牌直推都跟的士類型——紅的單只推紅的皇牌；綠的單只推綠的皇牌
+  // （紅的皇牌未到 fallback 時間都唔即時推綠的單，之後靠大廳輪詢開放）
+  const vvipTaxiType = order.taxiType || 'red';
+  const vvipDrivers = db.prepare(
+    "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved' AND taxi_type = ?"
+  ).all(vvipTaxiType);
+  vvipDrivers.forEach(d => {
+    sseHub.publishToDriver(d.id, 'new-vvip-order', { order });
+  });
 
   // 預約單同即時單都廣播俾大廳＋推播（Web Push/FCM）——司機有聲有通知
   sseHub.publishToDriverHall('new-order', { order });
@@ -491,10 +483,12 @@ router.post('/driver/post', rateLimit({ limit: 12, windowMs: 60 * 1000 }), authD
   );
 
   // v2.1.8：預約出貨單照皇牌優先——首先推送 VVIP 司機
+  // v2.1.96：皇牌直推跟的士類型過濾（紅的單唔推綠的皇牌，反之亦然）
   if (schedTs) {
+    const vvipTaxiType = order.taxiType || 'red';
     const vvipDrivers = db.prepare(
-      "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved'"
-    ).all();
+      "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved' AND taxi_type = ?"
+    ).all(vvipTaxiType);
     vvipDrivers.forEach(d => {
       sseHub.publishToDriver(d.id, 'new-vvip-order', { order });
     });
@@ -864,10 +858,12 @@ router.post('/driver/release/:orderId', authDriver, (req, res) => {
   const updated = getOrderById(order.id);
 
   // 放單後重新派（照皇牌優先）
+  // v2.1.96：皇牌直推跟的士類型過濾
   try {
+    const vvipTaxiType = updated.taxiType || 'red';
     const vvipDrivers = db.prepare(
-      "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved'"
-    ).all();
+      "SELECT id FROM drivers WHERE is_vvip = 1 AND online = 1 AND status = 'approved' AND taxi_type = ?"
+    ).all(vvipTaxiType);
     vvipDrivers.forEach(d => sseHub.publishToDriver(d.id, 'new-vvip-order', { order: updated }));
     sseHub.publishToDriverHall('new-order', { order: updated });
   } catch { /* ignore */ }

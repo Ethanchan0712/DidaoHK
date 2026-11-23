@@ -1,5 +1,6 @@
 // Web Push 推播：有單時發推送俾所有允許通知嘅司機
 const webpush = require('web-push');
+const { driverMatchesOrder, orderTypeTag, orderNoteText } = require('./order-visibility.cjs');
 
 const VAPID = {
   publicKey: process.env.VAPID_PUBLIC_KEY || 'BM1koz1hApejxB1ma_vkauFTe3DSjRjZP5HEDI06bgvlVM0doGGarZA3avOYQQ-bZ3zKLPDqIXMzvcArYpr-zqo',
@@ -46,6 +47,18 @@ async function sendFcmToDrivers(db, order, opts = {}) {
   if (!tokens || tokens.length === 0) return { fcm: 0 };
   // v2.1.9：token 去重——同一部機／同一 token 重複註冊時只推一次，避免重複通知
   const uniqueTokens = [...new Map(tokens.map((t) => [t.token, t])).values()];
+  // v2.1.96：按的士類型過濾收件司機（綠的收唔到紅的單；紅的未到等候時間收唔到綠的單）
+  const driverCache = new Map();
+  const visibleTokens = uniqueTokens.filter((t) => {
+    if (!t.driver_id) return true; // 舊 token 冇 driver_id，保留推送避免漏通知
+    let d = driverCache.get(t.driver_id);
+    if (!driverCache.has(t.driver_id)) {
+      d = db.prepare('SELECT taxi_type, is_vvip, vvip_expires_at, is_vip, vip_expires_at FROM drivers WHERE id = ?').get(t.driver_id) || null;
+      driverCache.set(t.driver_id, d);
+    }
+    return driverMatchesOrder(d, order);
+  });
+  if (visibleTokens.length === 0) return { fcm: 0 };
   const title = opts.title || '🚕 新單！';
   const pickup = order.pickup?.name || order.pickupName || '上車地點';
   const dest = order.destination?.name || order.destinationName || '目的地';
@@ -54,9 +67,11 @@ async function sendFcmToDrivers(db, order, opts = {}) {
   // v2.1.11：預約單通知帶時間（第一句：10月25日 下午3點）
   const sched = order.scheduledAt ? schedTxt(order.scheduledAt) : '';
   const schedPrefix = sched ? `預約單：${sched}，` : '';
+  const tagText = orderTypeTag(order);
+  const noteText = orderNoteText(order);
   const message = {
-    tokens: uniqueTokens.map((t) => t.token),
-    notification: { title: sched ? `🕒 預約單！` : title, body: `${schedPrefix}${pickup} → ${dest} ｜ ${fareText}` },
+    tokens: visibleTokens.map((t) => t.token),
+    notification: { title: sched ? `🕒 預約單！` : title, body: `${schedPrefix}【${tagText}】${pickup} → ${dest} ｜ ${fareText}${noteText}` },
     data: {
       orderId: order.id, pickup, dest, fare: String(fare), url: '/driver/hall',
     },
@@ -66,7 +81,7 @@ async function sendFcmToDrivers(db, order, opts = {}) {
     const r = await app.messaging().sendEachForMulticast(message);
     // 失效 token 自動清走
     r.responses.forEach((resp, i) => {
-      if (!resp.success && uniqueTokens[i]) db.removeFcmToken(uniqueTokens[i].token);
+      if (!resp.success && visibleTokens[i]) db.removeFcmToken(visibleTokens[i].token);
     });
     return { fcm: r.successCount };
   } catch (e) {
@@ -116,26 +131,35 @@ async function sendNewOrderPush(db, order, opts = {}) {
   const pLat = order.passengerLat ?? order.pickup?.lat;
   const pLng = order.passengerLng ?? order.pickup?.lng;
 
+  // v2.1.96：按的士類型過濾收件司機（綠的收唔到紅的單；紅的未到等候時間收唔到綠的單）
+  const driverCache = new Map();
+  const visibleSubs = uniqueSubs.filter((sub) => {
+    if (!sub.driver_id) return true; // 舊訂閱冇 driver_id，保留推送避免漏通知
+    let d = driverCache.get(sub.driver_id);
+    if (!driverCache.has(sub.driver_id)) {
+      d = db.prepare('SELECT taxi_type, is_vvip, vvip_expires_at, is_vip, vip_expires_at, current_lat, current_lng FROM drivers WHERE id = ?').get(sub.driver_id) || null;
+      driverCache.set(sub.driver_id, d);
+    }
+    return driverMatchesOrder(d, order);
+  });
+
+  const tagText = orderTypeTag(order);
+  const noteText = orderNoteText(order);
   const results = { sent: 0, failed: 0, errors: [] };
-  for (const sub of uniqueSubs) {
+  for (const sub of visibleSubs) {
     if (!sub.endpoint) continue;
     try {
       // 逐個司機計「距你幾多公里 + 預計幾多分鐘」（市區平均約 25km/h → 每公里約 2.4 分鐘）
       let extra = '';
-      if (sub.driver_id && typeof pLat === 'number' && typeof pLng === 'number') {
-        const d = db.prepare('SELECT current_lat, current_lng FROM drivers WHERE id = ?').get(sub.driver_id);
-        if (d && typeof d.current_lat === 'number' && typeof d.current_lng === 'number') {
-          const dist = haversineKm(d.current_lat, d.current_lng, pLat, pLng);
-          const etaMin = Math.max(1, Math.round(dist * 2.4));
-          extra = ` ｜ 距你 ${dist.toFixed(1)}km · 約 ${etaMin}分鐘`;
-        }
+      const d = sub.driver_id ? driverCache.get(sub.driver_id) : null;
+      if (d && typeof d.current_lat === 'number' && typeof d.current_lng === 'number') {
+        const dist = haversineKm(d.current_lat, d.current_lng, pLat, pLng);
+        const etaMin = Math.max(1, Math.round(dist * 2.4));
+        extra = ` ｜ 距你 ${dist.toFixed(1)}km · 約 ${etaMin}分鐘`;
       }
-      const note = order.passengerNotes?.customNote || '';
-      // 備註/額外要求：有就拼入通知 body，其他司機收推送時直接睇到
-      const noteText = note ? ` ｜ 📋${note}` : '';
       const payload = JSON.stringify({
         title: sched ? `🕒 預約單！` : title,
-        body: `${schedPrefix}${pickup} → ${dest} ｜ ${fareText}${extra}${noteText}`,
+        body: `${schedPrefix}【${tagText}】${pickup} → ${dest} ｜ ${fareText}${extra}${noteText}`,
         data: { orderId: order.id, pickup, dest, fare },
         // 傳埋導航目標俾 SW 跳去對應單
         url: '/driver/hall',

@@ -1,6 +1,9 @@
 // SSE Hub - 跨裝置實時同步
 // 每個 order 有自己的 channel，乘客同司機都 subscribe
 
+const db = require('../db/index.cjs');
+const { driverMatchesOrder } = require('../lib/order-visibility.cjs');
+
 class SSEHub {
   constructor() {
     // Map<orderId, Set<Response>>
@@ -30,6 +33,14 @@ class SSEHub {
     } else if (channel === 'driver-hall') {
       // 記低每個 driver-hall 連線屬於邊個司機（用嚟廣播時排除出單司機自己）
       res.__driverId = req.userId || null;
+      // v2.1.96：記低司機的士類型同級別，廣播新單時跟可見性規則過濾
+      try {
+        res.__driverInfo = db.prepare(
+          'SELECT taxi_type, is_vvip, vvip_expires_at, is_vip, vip_expires_at FROM drivers WHERE id = ?'
+        ).get(req.userId) || null;
+      } catch {
+        res.__driverInfo = null;
+      }
       this.driverHallClients.add(res);
     } else if (channel === 'admin') {
       this.adminClients.add(res);
@@ -75,10 +86,13 @@ class SSEHub {
 
   publishToDriverHall(event, data, excludeDriverId) {
     if (this.driverHallClients.size === 0) return;
+    const order = data && data.order;
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of this.driverHallClients) {
       // v2.0.89：出單司機自己唔收自己張單嘅 new-order 廣播（避免「已出單」＋「新貨單」連讀兩句）
       if (excludeDriverId && res.__driverId === excludeDriverId) continue;
+      // v2.1.96：新單廣播按的士類型＋級別過濾——綠的收唔到紅的單；紅的未到等候時間收唔到綠的單
+      if (order && res.__driverInfo && !driverMatchesOrder(res.__driverInfo, order)) continue;
       try { res.write(payload); } catch { /* ignore */ }
     }
   }
