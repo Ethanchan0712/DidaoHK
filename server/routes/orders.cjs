@@ -4,6 +4,7 @@ const sseHub = require('../sse/hub.cjs');
 const { authPassenger, authDriver, authAdmin, authAny } = require('../middleware/auth.cjs');
 const { rateLimit } = require('../middleware/rate-limit.cjs');
 const { sendNewOrderPush } = require('../lib/push.cjs');
+const { driverMatchesOrder } = require('../lib/order-visibility.cjs');
 
 const router = express.Router();
 
@@ -597,12 +598,10 @@ router.get('/driver/hall', authDriver, (req, res) => {
     // v2.1.48：皇牌直貨單（isDirect=direct → royal_lock=1）鎖定期內，普通司機都唔可以見——
     //          之前呢個分支直接 return，跳過咗下面嘅 royal_lock 過濾，令普通司機見到（但接唔到）皇牌鎖定單
     if (row.created_by_driver) {
-      if (!row.is_scheduled) {
-        // v2.1.50：加過期判斷——鎖定過咗都唔再擋普通司機
-        if (row.royal_lock === 1 && Number(row.royal_lock_expire_at || 0) > Date.now() && !isVvip) return false;
-        return row.driver_posted_from !== req.userId;
-      }
+      // 出貨者自己唔會見到自己出嘅單（避免誤接自己張單）
       if (row.driver_posted_from === req.userId) return false;
+      // v2.1.50：皇牌鎖定期——鎖定過咗都唔再擋普通司機
+      if (!row.is_scheduled && row.royal_lock === 1 && Number(row.royal_lock_expire_at || 0) > Date.now() && !isVvip) return false;
     }
 
     // 拒單記錄：呢位司機拒過嘅單唔會再派俾佢
@@ -1354,7 +1353,7 @@ router.get('/scheduled/upcoming', authDriver, (req, res) => {
   const rows = db.prepare(`
     SELECT o.id, o.status, o.scheduled_at, o.created_at, o.pickup_name, o.destination_name,
            o.estimated_fare, o.car_type, o.taxi_type, o.created_by_driver,
-           o.is_direct, o.teishoku, o.tip_amount, o.passenger_notes,
+           o.is_direct, o.teishoku, o.tip_amount, o.passenger_notes, o.taxi_designated,
            d.name as driver_name, d.plate as driver_plate
     FROM orders o
     LEFT JOIN drivers d ON o.driver_id = d.id
@@ -1362,6 +1361,9 @@ router.get('/scheduled/upcoming', authDriver, (req, res) => {
     ORDER BY o.scheduled_at ASC
     LIMIT 20
   `).all();
+  // v2.1.97：預約單列表同樣按紅綠類型過濾（綠的睇唔到紅的預約單；紅的未到等候時間睇唔到綠的預約單）
+  const meDriver = db.prepare('SELECT taxi_type, is_vvip, vvip_expires_at, is_vip, vip_expires_at FROM drivers WHERE id = ?').get(req.userId);
+  const visibleRows = rows.filter((r) => driverMatchesOrder(meDriver, r));
   // 自己接咗嘅預約單（hold 緊）——預約面板顯示「我嘅預約」＋放單鍵
   // v2.1.12：已接單帶埋乘客電話（接咗先睇到；未接嘅單唔顯示電話，私隱安全）
   const myAccepted = db.prepare(`
@@ -1396,7 +1398,7 @@ router.get('/scheduled/upcoming', authDriver, (req, res) => {
     // 只有「已接」嘅單先帶電話（出貨單用出貨司機電話；乘客單用乘客電話）
     phone: withPhone ? (r.cargo_phone || r.passenger_phone || undefined) : undefined,
   });
-  res.json({ orders: rows.map((r) => map(r, false)), myAccepted: myAccepted.map((r) => map(r, true)) });
+  res.json({ orders: visibleRows.map((r) => map(r, false)), myAccepted: myAccepted.map((r) => map(r, true)) });
 });
 
 module.exports = router;
